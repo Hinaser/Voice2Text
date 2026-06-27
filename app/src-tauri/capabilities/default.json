@@ -1,0 +1,12 @@
+{
+  "identifier": "default",
+  "description": "Default capability for the overlay window",
+  "windows": ["overlay"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-close",
+    "core:window:allow-set-always-on-top",
+    "core:window:allow-minimize"
+  ]
+}

@@ -1,0 +1,21 @@
+[package]
+name = "voice2text"
+version = "0.1.0"
+edition = "2021"
+description = "Voice2Text — live meeting captions overlay"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+# (release profile is defined at the workspace root: app/Cargo.toml)
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-global-shortcut = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = "0.4"
+wasapi = "0.23.0"
+sherpa-rs = { version = "0.6.8", default-features = false, features = ["download-binaries", "sys"] }
+# Whisper-CUDA lives in the `whisper-sidecar` child process, NOT here, so this
+# launcher stays CPU-only and small (no CUDA link / DLLs needed to start).

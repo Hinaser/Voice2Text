@@ -1,0 +1,9 @@
+[package]
+name = "llama-sidecar"
+version = "0.1.0"
+edition = "2021"
+description = "Voice2Text local-LLM sidecar — summarizes a meeting transcript with Qwen2.5-3B on the GPU, kept out of the main app so the launcher stays small."
+
+[dependencies]
+llama-cpp-2 = { version = "0.1.122", features = ["cuda"] }
+# (release profile is defined at the workspace root: app/Cargo.toml)

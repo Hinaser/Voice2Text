@@ -1,0 +1,17 @@
+[package]
+name = "live-stream"
+version = "0.1.0"
+edition = "2021"
+
+# Live streaming captions: wasapi loopback (M1) + sherpa-onnx online streaming
+# Zipformer (M3.5) -> Google-style word-by-word text on screen + saved file.
+# CPU-only (no CUDA). Whisper hybrid (accurate saved transcript) is a follow-up.
+
+[dependencies]
+wasapi = "0.23.0"
+chrono = "0.4"
+sherpa-rs = { version = "0.6.8", default-features = false, features = ["download-binaries", "sys"] }
+windows-sys = { version = "0.59", features = ["Win32_System_Console", "Win32_Foundation"] }
+
+[profile.release]
+opt-level = 3

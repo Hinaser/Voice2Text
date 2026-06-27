@@ -1,0 +1,9 @@
+# M0 validation deps.
+# NOTE: torch is installed separately from the CUDA 12.8 index (see Setup-M0.ps1)
+# because the default PyPI wheel is CPU-only and would NOT exercise the Blackwell
+# (sm_120) GPU. faster-whisper pulls in ctranslate2, which is the actual STT
+# backend we are validating.
+faster-whisper==1.1.1
+# faster-whisper 1.1.1's utils.py imports `requests` directly, but newer
+# huggingface-hub no longer pulls it in transitively, so pin it explicitly.
+requests

@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Voice2Text</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <div id="titlebar" data-tauri-drag-region>
+      <span class="dot" id="status-dot"></span>
+      <span id="status-text" data-tauri-drag-region>Starting…</span>
+      <div class="spacer" data-tauri-drag-region></div>
+      <button id="font-dec" title="Smaller text">A−</button>
+      <button id="font-inc" title="Larger text">A+</button>
+      <button id="opacity" title="Cycle background opacity">◧</button>
+      <button id="pin" title="Toggle always-on-top">📌</button>
+      <button id="clear" title="Clear transcript">⌫</button>
+      <button id="summarize-btn" title="Summarize meeting (local LLM)">✦</button>
+      <button id="settings-btn" title="Settings">⚙</button>
+      <button id="close" title="Close">✕</button>
+    </div>
+
+    <div id="transcript"></div>
+    <div id="partials">
+      <div id="partial-others" class="partial"></div>
+      <div id="partial-me" class="partial me"></div>
+    </div>
+
+    <div id="settings" class="hidden">
+      <div class="settings-head">
+        <span>Settings</span>
+        <button id="settings-close" title="Close settings">✕</button>
+      </div>
+      <div class="settings-body">
+        <label class="row">
+          <input type="checkbox" id="cfg-save" />
+          <span>Save transcript to file</span>
+        </label>
+        <div class="row sub">
+          <input type="text" id="cfg-savedir" placeholder="Documents\Voice2Text (default)" />
+          <button id="cfg-opendir" title="Open folder">Open</button>
+        </div>
+
+        <label class="row">
+          <input type="checkbox" id="cfg-whisper" />
+          <span>Clean saved transcript (Whisper GPU) <em>(restart)</em></span>
+        </label>
+
+        <label class="row">
+          <input type="checkbox" id="cfg-punct" />
+          <span>Punctuation &amp; casing</span>
+        </label>
+        <label class="row">
+          <input type="checkbox" id="cfg-diar" />
+          <span>Speaker labels</span>
+        </label>
+
+        <label class="row">
+          <input type="checkbox" id="cfg-mic" />
+          <span>Capture my microphone (label "You") <em>(restart)</em></span>
+        </label>
+        <label class="row">
+          <input type="checkbox" id="cfg-echo" />
+          <span>Suppress speaker echo on mic</span>
+        </label>
+
+        <label class="row col">
+          <span>Show/hide hotkey <em>(restart)</em></span>
+          <input type="text" id="cfg-hotkey" placeholder="Alt+Shift+V" />
+        </label>
+
+        <label class="row col">
+          <span>Models folder <em>(applies on restart)</em></span>
+          <input type="text" id="cfg-models" placeholder="auto-detect (default)" />
+        </label>
+
+        <div class="row col">
+          <span>Transcript (this session)</span>
+          <div class="btnrow">
+            <button id="exp-copy">Copy</button>
+            <button id="exp-txt">.txt</button>
+            <button id="exp-md">.md</button>
+            <button id="exp-srt">.srt</button>
+          </div>
+        </div>
+
+        <p class="note">Saving, punctuation, speaker labels and echo suppression
+          apply immediately. Microphone capture, the clean Whisper transcript,
+          the hotkey and the models folder take effect next launch.</p>
+      </div>
+    </div>
+
+    <div id="summary" class="hidden">
+      <div class="settings-head">
+        <span>Meeting summary</span>
+        <button id="summary-close" title="Close">✕</button>
+      </div>
+      <div class="settings-body">
+        <div id="summary-body"></div>
+        <div class="btnrow" id="summary-actions">
+          <button id="summary-copy">Copy</button>
+          <button id="summary-save">Save .md</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

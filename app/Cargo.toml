@@ -1,0 +1,8 @@
+# Cargo workspace for the Voice2Text desktop app and its GPU sidecars.
+# One shared target/ dir, one Cargo.lock, unified dependency resolution.
+[workspace]
+members = ["src-tauri", "whisper-sidecar", "llama-sidecar"]
+resolver = "2"
+
+[profile.release]
+opt-level = 3

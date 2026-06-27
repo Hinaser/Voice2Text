@@ -1,0 +1,17 @@
+[package]
+name = "live-stt"
+version = "0.1.0"
+edition = "2021"
+
+# Vertical-slice demo: capture system loopback (what plays through the speakers:
+# YouTube, Zoom, Meet) and show it as live text via whisper-rs + CUDA.
+# Combines the validated M0.5 (whisper CUDA) and M1 (wasapi loopback) pieces with
+# a simple energy-based segmenter. NOT the final app — proves speech -> text live.
+
+[dependencies]
+wasapi = "0.23.0"
+whisper-rs = { version = "0.16", features = ["cuda"] }
+chrono = "0.4"
+
+[profile.release]
+opt-level = 3

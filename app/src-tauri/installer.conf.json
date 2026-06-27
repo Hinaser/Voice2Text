@@ -1,0 +1,14 @@
+{
+  "bundle": {
+    "resources": {
+      "payload/sherpa-onnx-c-api.dll": "./",
+      "payload/sherpa-onnx-cxx-api.dll": "./",
+      "payload/onnxruntime.dll": "./",
+      "payload/onnxruntime_providers_shared.dll": "./",
+      "payload/cargs.dll": "./",
+      "payload/models/sherpa-onnx-streaming-zipformer-en-2023-06-26": "models/",
+      "payload/models/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12": "models/",
+      "payload/models/3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx": "models/"
+    }
+  }
+}

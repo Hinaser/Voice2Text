@@ -1,0 +1,9 @@
+[package]
+name = "whisper-sidecar"
+version = "0.1.0"
+edition = "2021"
+description = "Voice2Text Whisper-CUDA sidecar — re-transcribes utterances for the clean saved transcript, kept out of the main (CPU-only) app so the launcher stays small."
+
+[dependencies]
+whisper-rs = { version = "0.16", features = ["cuda"] }
+# (release profile is defined at the workspace root: app/Cargo.toml)

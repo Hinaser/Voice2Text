@@ -1,0 +1,18 @@
+[package]
+name = "m05-whisper-cuda"
+version = "0.1.0"
+edition = "2021"
+
+# M0.5 validation harness — NOT the app. Confirms whisper.cpp (via whisper-rs)
+# builds and runs with CUDA on this Blackwell GPU, and measures RTF/accuracy
+# against the M0 faster-whisper baseline.
+
+[dependencies]
+# `cuda` feature compiles whisper.cpp with the CUDA backend.
+# 0.16 — 0.14's whisper-rs-sys 0.13.1 hit a bindgen layout-test panic against
+# the newer LLVM 21 libclang on this machine; 0.16 handles it.
+whisper-rs = { version = "0.16", features = ["cuda"] }
+hound = "3.5"          # read the 16 kHz mono test WAV
+
+[profile.release]
+opt-level = 3

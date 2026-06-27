@@ -1,0 +1,19 @@
+[package]
+name = "m35-sherpa"
+version = "0.1.0"
+edition = "2021"
+
+# M3.5 — validate streaming ASR (sherpa-onnx streaming Zipformer transducer) for
+# true Google-style low-latency partials. Isolated harness, like M0.5 was for
+# whisper. If this builds + runs real-time, it becomes the live engine in
+# live-stt (whisper stays for the accurate saved transcript).
+
+[dependencies]
+hound = "3.5"
+# download-binaries: pull prebuilt sherpa-onnx (no source build).
+# sys: expose the raw FFI so we can drive the ONLINE (streaming) recognizer,
+#      which sherpa-rs has no high-level wrapper for (only offline ones).
+sherpa-rs = { version = "0.6.8", default-features = false, features = ["download-binaries", "sys"] }
+
+[profile.release]
+opt-level = 3

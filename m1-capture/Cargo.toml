@@ -1,0 +1,15 @@
+[package]
+name = "m1-capture"
+version = "0.1.0"
+edition = "2021"
+
+# M1 — Windows dual-track audio capture stress test (mic + system loopback).
+# Uses the native `wasapi` crate for explicit loopback + endpoint-role control
+# (Multimedia vs Communications), which cpal abstracts away.
+
+[dependencies]
+hound = "3.5"
+wasapi = "0.23.0"
+
+[profile.release]
+opt-level = 3

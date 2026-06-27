@@ -1,0 +1,47 @@
+# ── Build artifacts (regenerable, huge) ─────────────────────────────
+# Rust build outputs in every crate
+target/
+**/target/
+
+# Node / Tauri CLI deps
+node_modules/
+app/node_modules/
+
+# Python virtualenv (faster-whisper M0 work) — torch/CUDA DLLs, never commit
+.venv/
+__pycache__/
+*.pyc
+
+# ── Distribution / staging (built bundles, model copies, CUDA + app DLLs) ─
+dist/
+app/src-tauri/payload/
+
+# ── Model weights & runtime DLLs — DO NOT COMMIT ────────────────────
+# Large (GitHub blocks >100 MB) and license-encumbered (e.g. Qwen2.5-3B is
+# under the Qwen Research License). Ship a download script instead — see
+# scripts/Fetch-Models.ps1 / models/README.md.
+models/*
+!models/README.md
+*.bin
+*.gguf
+*.onnx
+*.dll
+*.exe
+
+# ── Personal / captured data — DO NOT COMMIT ────────────────────────
+# Real microphone + system-audio recordings and transcribed meeting content.
+transcripts/
+*.wav
+*.mp3
+*.m4a
+
+# ── Logs & local-path leakage ───────────────────────────────────────
+*.log
+scripts/*.log
+
+# ── OS / editor junk ────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
