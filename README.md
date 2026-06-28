@@ -9,6 +9,8 @@ It captures **both** the meeting audio coming out of your speakers **and** your
 own microphone, shows live captions in a floating overlay, saves a clean
 transcript, and can summarize the meeting — all on-device.
 
+![Voice2Text overlay showing live captions with speaker labels over a meeting, and the status bar with the captured devices and transcript path](demo.png)
+
 > **Privacy:** no audio, transcript, or summary ever leaves your machine. There
 > is no telemetry and no network calls at runtime (models are downloaded once,
 > up front).
