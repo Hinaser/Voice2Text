@@ -122,6 +122,32 @@ html, body {
 .partial:empty { display: none; }
 .partial.me { color: #fca5a5; }
 
+/* ---- persistent status bar (capture sources + save target) ---- */
+#statusbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 10px;
+  font-size: 11px;
+  color: #8b93a3;
+  background: rgba(255, 255, 255, 0.03);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+#statusbar span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#sb-sources { flex: 1 1 auto; }
+#sb-save {
+  flex: 0 1 auto;
+  max-width: 60%;
+  color: #9aa3b2;
+  text-align: right;
+}
+
 /* ---- overlay panels (settings + summary) ---- */
 .hidden { display: none !important; }
 

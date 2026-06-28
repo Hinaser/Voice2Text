@@ -121,7 +121,7 @@ fn manager(
         }
         let w = writer.get_or_insert_with(|| TranscriptWriter::new(cfg.resolved_save_dir()));
         match w.write_line(&job.time, &job.label, text) {
-            Ok(Some(path)) => ui.status("listening", format!("Saving to {}", path.display())),
+            Ok(Some(path)) => ui.saving(path.to_string_lossy().into_owned()),
             Ok(None) => {}
             Err(e) => ui.status("error", format!("Save failed: {e}")),
         }

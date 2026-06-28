@@ -108,6 +108,11 @@ pub fn run(
 
     ui.status("listening", listening_detail(mic_track.is_some(), whisper.is_some()));
 
+    // Persistent status-bar summary: which endpoints we're capturing and where
+    // the transcript goes. The file path follows later via `saving` once opened.
+    let sources = crate::audio::capture_source_names(&cfg0.output_device, &cfg0.input_device, mic_track.is_some());
+    ui.capture(sources, cfg0.save_transcript, cfg0.resolved_save_dir().to_string_lossy().into_owned());
+
     // Capture threads → one tagged channel.
     let (tx, rx) = mpsc::channel::<(Source, Vec<f32>)>();
     let sys_cap = spawn_capture(Source::System, &cfg0.output_device, &running, &tx, &ui);
@@ -163,7 +168,7 @@ pub fn run(
                             let writer = fallback_writer
                                 .get_or_insert_with(|| TranscriptWriter::new(cfg.resolved_save_dir()));
                             match writer.write_line(&time, &label, &polished) {
-                                Ok(Some(path)) => ui.status("listening", format!("Saving to {}", path.display())),
+                                Ok(Some(path)) => ui.saving(path.to_string_lossy().into_owned()),
                                 Ok(None) => {}
                                 Err(e) => ui.status("error", format!("Save failed: {e}")),
                             }

@@ -25,6 +25,26 @@ struct Status {
     detail: String,
 }
 
+#[derive(Clone, serde::Serialize)]
+struct CaptureSource {
+    role: &'static str,
+    name: String,
+}
+
+/// Persistent capture info for the status bar: which endpoints are being
+/// captured and where (if anywhere) the transcript is saved.
+#[derive(Clone, serde::Serialize)]
+struct Capture {
+    sources: Vec<CaptureSource>,
+    saving: bool,
+    save_dir: String,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct Saving {
+    path: String,
+}
+
 /// Wraps the Tauri `AppHandle` so the pipeline talks in domain terms
 /// (partial / final / status) instead of stringly-typed `emit` calls.
 #[derive(Clone)]
@@ -51,5 +71,16 @@ impl Ui {
 
     pub fn status(&self, state: &'static str, detail: impl Into<String>) {
         let _ = self.app.emit("status", Status { state, detail: detail.into() });
+    }
+
+    /// Emit the persistent capture summary (which sources, and the save target).
+    pub fn capture(&self, sources: Vec<(&'static str, String)>, saving: bool, save_dir: String) {
+        let sources = sources.into_iter().map(|(role, name)| CaptureSource { role, name }).collect();
+        let _ = self.app.emit("capture", Capture { sources, saving, save_dir });
+    }
+
+    /// Emit the resolved transcript file path once it's known (file opened).
+    pub fn saving(&self, path: String) {
+        let _ = self.app.emit("saving", Saving { path });
     }
 }

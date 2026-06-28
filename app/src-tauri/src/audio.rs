@@ -36,6 +36,29 @@ fn collect(en: &DeviceEnumerator, direction: &Direction) -> Res<Vec<DeviceInfo>>
     Ok(out)
 }
 
+/// Friendly names of the endpoints that will actually be captured, paired with a
+/// display role, for the status bar. Mirrors how the capture threads resolve
+/// devices, so the names shown match what's recorded. Best-effort: returns
+/// whatever it can resolve (empty on enumerator failure).
+pub fn capture_source_names(output_id: &str, input_id: &str, mic: bool) -> Vec<(&'static str, String)> {
+    let mut out = Vec::new();
+    let _ = wasapi::initialize_mta().ok();
+    let en = match DeviceEnumerator::new() {
+        Ok(e) => e,
+        Err(_) => return out,
+    };
+    let name = |d: &Device| d.get_friendlyname().unwrap_or_else(|_| "default device".into());
+    if let Ok(d) = resolve_device(&en, &Direction::Render, output_id) {
+        out.push(("System audio", name(&d)));
+    }
+    if mic {
+        if let Ok(d) = resolve_device(&en, &Direction::Capture, input_id) {
+            out.push(("Microphone", name(&d)));
+        }
+    }
+    out
+}
+
 /// Resolve the endpoint to capture from: the configured `id` if set and still
 /// present, otherwise the default device for the Console role.
 pub fn resolve_device(en: &DeviceEnumerator, direction: &Direction, id: &str) -> Res<Device> {
