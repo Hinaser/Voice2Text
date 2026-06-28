@@ -122,31 +122,24 @@ html, body {
 .partial:empty { display: none; }
 .partial.me { color: #fca5a5; }
 
-/* ---- persistent status bar (capture sources + save target) ---- */
+/* ---- persistent status bar: row 1 = capture sources, row 2 = save target ---- */
 #statusbar {
   flex: 0 0 auto;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 4px 10px;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px 10px;
   font-size: 11px;
   color: #8b93a3;
   background: rgba(255, 255, 255, 0.03);
   border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
-#statusbar span {
+.sb-row {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-#sb-sources { flex: 1 1 auto; }
-#sb-save {
-  flex: 0 1 auto;
-  max-width: 60%;
-  color: #9aa3b2;
-  text-align: right;
-}
+#sb-save { color: #9aa3b2; }
 
 /* ---- overlay panels (settings + summary) ---- */
 .hidden { display: none !important; }
@@ -258,6 +251,13 @@ html, body {
 .settings-body .btnrow {
   display: flex;
   gap: 6px;
+}
+
+/* input + buttons on one line (e.g. the models-folder row) */
+.settings-body .inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .settings-body .note {

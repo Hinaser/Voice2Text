@@ -55,6 +55,7 @@ fn main() {
     let running = Arc::new(AtomicBool::new(true));
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
@@ -103,6 +104,8 @@ fn main() {
             commands::set_config,
             commands::save_dir,
             commands::open_save_dir,
+            commands::models_dir,
+            commands::open_models_dir,
             commands::export_transcript,
             commands::summarize,
             commands::list_audio_devices,

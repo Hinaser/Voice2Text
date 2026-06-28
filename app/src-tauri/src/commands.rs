@@ -73,6 +73,29 @@ pub fn export_transcript(state: tauri::State<AppState>, filename: String, conten
 pub fn open_save_dir(state: tauri::State<AppState>) -> Result<(), String> {
     let dir = state.config.lock().unwrap().resolved_save_dir();
     let _ = std::fs::create_dir_all(&dir);
+    open_in_explorer(&dir)
+}
+
+/// The effective models folder (the configured override or the auto-detected
+/// location), for display so "auto-detect" isn't opaque. Normalized (the dev
+/// fallback contains `..` segments) and without the `\\?\` verbatim prefix.
+#[tauri::command]
+pub fn models_dir(state: tauri::State<AppState>) -> String {
+    let override_dir = state.config.lock().unwrap().models_dir.clone();
+    let dir = crate::paths::models_dir(&override_dir);
+    let display = std::fs::canonicalize(&dir).unwrap_or(dir);
+    let s = display.to_string_lossy();
+    s.strip_prefix(r"\\?\").unwrap_or(&s).to_string()
+}
+
+/// Open the effective models folder in Explorer.
+#[tauri::command]
+pub fn open_models_dir(state: tauri::State<AppState>) -> Result<(), String> {
+    let override_dir = state.config.lock().unwrap().models_dir.clone();
+    open_in_explorer(&crate::paths::models_dir(&override_dir))
+}
+
+fn open_in_explorer(dir: &std::path::Path) -> Result<(), String> {
     std::process::Command::new("explorer")
         .arg(dir)
         .spawn()

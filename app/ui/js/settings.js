@@ -50,6 +50,37 @@ async function refreshModels() {
   }
 }
 
+// Show the effective (resolved) folders as placeholders so "default" /
+// "auto-detect" aren't opaque — users can see where files actually go.
+async function refreshPaths() {
+  try {
+    const sd = await invoke("save_dir");
+    if (sd) el.saveDir.placeholder = sd;
+    const md = await invoke("models_dir");
+    if (md) el.models.placeholder = md;
+  } catch (e) {
+    console.error("resolving folders failed", e);
+  }
+}
+
+// Open a native folder picker (parented to the window), returning the chosen
+// path or null if cancelled.
+async function pickFolder(defaultPath) {
+  try {
+    const picked = await invoke("plugin:dialog|open", {
+      options: { directory: true, multiple: false, title: "Choose folder", defaultPath: defaultPath || undefined },
+    });
+    if (!picked) return null;
+    if (typeof picked === "string") return picked;
+    if (Array.isArray(picked)) return picked[0] || null;
+    if (picked.path) return picked.path;
+    return null;
+  } catch (e) {
+    console.error("folder picker failed", e);
+    return null;
+  }
+}
+
 // Fill a <select> with a "System default" entry plus one <option> per device,
 // preserving the currently-configured id even if enumeration hasn't run yet.
 function fillDeviceSelect(select, devices, selectedId) {
@@ -108,6 +139,7 @@ export function initSettings() {
     if (!panel.classList.contains("hidden")) {
       refreshDevices();
       refreshModels();
+      refreshPaths();
     }
   });
   document.getElementById("settings-close").addEventListener("click", () => panel.classList.add("hidden"));
@@ -125,8 +157,23 @@ export function initSettings() {
   bindText(el.models, "models_dir");
   bindText(el.hotkey, "hotkey");
 
+  // Transcript folder: pick (Browse…) or reveal (Open) in Explorer.
+  document.getElementById("cfg-browsedir").addEventListener("click", async () => {
+    const dir = await pickFolder(el.saveDir.value.trim() || el.saveDir.placeholder);
+    if (dir) { el.saveDir.value = dir; config.save_dir = dir; persist(); }
+  });
   document.getElementById("cfg-opendir").addEventListener("click", () => {
     config.save_dir = el.saveDir.value.trim();
     persist().then(() => invoke("open_save_dir").catch((e) => console.error(e)));
+  });
+
+  // Models folder: pick (Browse…) or reveal (Open) the effective folder.
+  document.getElementById("cfg-browsemodels").addEventListener("click", async () => {
+    const dir = await pickFolder(el.models.value.trim() || el.models.placeholder);
+    if (dir) { el.models.value = dir; config.models_dir = dir; persist(); }
+  });
+  document.getElementById("cfg-openmodels").addEventListener("click", () => {
+    config.models_dir = el.models.value.trim();
+    persist().then(() => invoke("open_models_dir").catch((e) => console.error(e)));
   });
 }

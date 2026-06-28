@@ -29,8 +29,8 @@
     </div>
 
     <div id="statusbar">
-      <span id="sb-sources">Starting…</span>
-      <span id="sb-save"></span>
+      <div id="sb-sources" class="sb-row">Starting…</div>
+      <div id="sb-save" class="sb-row"></div>
     </div>
 
     <div id="settings" class="hidden">
@@ -45,6 +45,7 @@
         </label>
         <div class="row sub">
           <input type="text" id="cfg-savedir" placeholder="Documents\Voice2Text (default)" />
+          <button id="cfg-browsedir" title="Choose folder…">Browse…</button>
           <button id="cfg-opendir" title="Open folder">Open</button>
         </div>
 
@@ -90,10 +91,14 @@
           <input type="text" id="cfg-hotkey" placeholder="Alt+Shift+V" />
         </label>
 
-        <label class="row col">
+        <div class="row col">
           <span>Models folder <em>(applies on restart)</em></span>
-          <input type="text" id="cfg-models" placeholder="auto-detect (default)" />
-        </label>
+          <div class="inline">
+            <input type="text" id="cfg-models" placeholder="auto-detect (default)" />
+            <button id="cfg-browsemodels" title="Choose folder…">Browse…</button>
+            <button id="cfg-openmodels" title="Open folder">Open</button>
+          </div>
+        </div>
 
         <div class="row col">
           <span>Transcript (this session)</span>
