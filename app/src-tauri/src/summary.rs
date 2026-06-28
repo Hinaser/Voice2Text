@@ -7,11 +7,19 @@ use std::process::{Command, Stdio};
 use crate::paths;
 
 const SIDECAR_EXE: &str = "llama-sidecar.exe";
-const MODEL_FILE: &str = "Qwen2.5-3B-Instruct-Q4_K_M.gguf";
+const DEFAULT_MODEL: &str = "Qwen2.5-3B-Instruct-Q4_K_M.gguf";
 
 /// Summarize `transcript` with the local LLM. Blocking — call off the UI thread.
-pub fn run(models_override: &str, transcript: &str) -> Result<String, String> {
-    let model = paths::models_dir(models_override).join(MODEL_FILE);
+/// `model_file` is a filename in the models folder (resolved via `models_override`)
+/// or an absolute path; empty falls back to the bundled Qwen default.
+pub fn run(models_override: &str, model_file: &str, transcript: &str) -> Result<String, String> {
+    let model_file = if model_file.trim().is_empty() { DEFAULT_MODEL } else { model_file.trim() };
+    let candidate = std::path::Path::new(model_file);
+    let model = if candidate.is_absolute() {
+        candidate.to_path_buf()
+    } else {
+        paths::models_dir(models_override).join(model_file)
+    };
     if !model.exists() {
         return Err(format!("Summary model not found at {}", model.display()));
     }

@@ -13,6 +13,7 @@ export const config = {
   mic_capture: true,
   echo_suppression: true,
   whisper_transcript: true,
+  summary_model: "Qwen2.5-3B-Instruct-Q4_K_M.gguf",
   font_size: 18,
   opacity: 0.82,
   always_on_top: true,

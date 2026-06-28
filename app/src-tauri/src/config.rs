@@ -30,6 +30,9 @@ pub struct Config {
     /// Re-transcribe each utterance with Whisper (GPU) for a clean saved
     /// transcript; live captions stay streaming. Applies on restart.
     pub whisper_transcript: bool,
+    /// GGUF model (filename in the models folder, or an absolute path) used by
+    /// the local-LLM meeting summary. Empty => the bundled Qwen2.5-3B default.
+    pub summary_model: String,
     /// Overlay text size (px). Persisted so the UI restores it.
     pub font_size: u32,
     /// Overlay background opacity 0.0–1.0.
@@ -55,6 +58,7 @@ impl Default for Config {
             mic_capture: true,
             echo_suppression: true,
             whisper_transcript: true,
+            summary_model: "Qwen2.5-3B-Instruct-Q4_K_M.gguf".to_string(),
             font_size: 18,
             opacity: 0.82,
             always_on_top: true,

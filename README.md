@@ -136,8 +136,14 @@ git tag**, and uploads the assets to a GitHub Release via the `gh` CLI. The full
 Settings persist to `%APPDATA%\com.voice2text.overlay\config.json` and are
 editable from the in-app ⚙ panel: transcript saving + folder, punctuation,
 speaker labels, microphone capture, echo suppression, the system-audio and
-microphone **source devices**, the Whisper clean transcript, the show/hide
-hotkey, models folder, and appearance.
+microphone **source devices**, the Whisper clean transcript, the **summary
+model** (any `.gguf` in the models folder), the show/hide hotkey, models folder,
+and appearance.
+
+The summary uses whichever GGUF chat model you pick — drop another llama.cpp
+GGUF (e.g. an Apache-2.0 Llama/Mistral instruct model) into `models\` and choose
+it from the dropdown. The sidecar uses the model's own chat template, so no code
+change is needed.
 
 ## Licensing
 

@@ -13,9 +13,42 @@ const el = {
   echo: document.getElementById("cfg-echo"),
   output: document.getElementById("cfg-output"),
   input: document.getElementById("cfg-input"),
+  summaryModel: document.getElementById("cfg-summary-model"),
   models: document.getElementById("cfg-models"),
   hotkey: document.getElementById("cfg-hotkey"),
 };
+
+// Fill the summary-model <select> with the .gguf files found in the models
+// folder, keeping the configured one selectable even if it isn't there yet.
+function fillModelSelect(select, models, selectedId) {
+  const options = [...models];
+  if (selectedId && !options.includes(selectedId)) options.push(selectedId);
+  select.innerHTML = "";
+  if (options.length === 0) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "(no .gguf models found)";
+    select.appendChild(opt);
+    return;
+  }
+  for (const name of options) {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    select.appendChild(opt);
+  }
+  select.value = selectedId || "";
+}
+
+// Query the backend for .gguf models and (re)populate the summary-model dropdown.
+async function refreshModels() {
+  try {
+    const models = await invoke("list_gguf_models");
+    fillModelSelect(el.summaryModel, models, config.summary_model);
+  } catch (e) {
+    console.error("list_gguf_models failed", e);
+  }
+}
 
 // Fill a <select> with a "System default" entry plus one <option> per device,
 // preserving the currently-configured id even if enumeration hasn't run yet.
@@ -55,6 +88,7 @@ export function syncSettingsForm() {
   el.echo.checked = config.echo_suppression;
   el.output.value = config.output_device;
   el.input.value = config.input_device;
+  el.summaryModel.value = config.summary_model;
   el.models.value = config.models_dir;
   el.hotkey.value = config.hotkey;
 }
@@ -71,7 +105,10 @@ export function initSettings() {
   document.getElementById("settings-btn").addEventListener("click", () => {
     syncSettingsForm();
     panel.classList.toggle("hidden");
-    if (!panel.classList.contains("hidden")) refreshDevices();
+    if (!panel.classList.contains("hidden")) {
+      refreshDevices();
+      refreshModels();
+    }
   });
   document.getElementById("settings-close").addEventListener("click", () => panel.classList.add("hidden"));
 
@@ -83,6 +120,7 @@ export function initSettings() {
   bindBool(el.echo, "echo_suppression");
   bindText(el.output, "output_device");
   bindText(el.input, "input_device");
+  bindText(el.summaryModel, "summary_model");
   bindText(el.saveDir, "save_dir");
   bindText(el.models, "models_dir");
   bindText(el.hotkey, "hotkey");

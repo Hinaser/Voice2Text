@@ -106,6 +106,7 @@ fn main() {
             commands::export_transcript,
             commands::summarize,
             commands::list_audio_devices,
+            commands::list_gguf_models,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

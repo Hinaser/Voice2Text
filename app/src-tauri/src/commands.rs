@@ -83,8 +83,35 @@ pub fn open_save_dir(state: tauri::State<AppState>) -> Result<(), String> {
 /// Summarize the session transcript with the local LLM (runs off-thread).
 #[tauri::command]
 pub async fn summarize(app: tauri::AppHandle, transcript: String) -> Result<String, String> {
-    let models_override = app.state::<AppState>().config.lock().unwrap().models_dir.clone();
-    tauri::async_runtime::spawn_blocking(move || summary::run(&models_override, &transcript))
+    let (models_override, model_file) = {
+        let state = app.state::<AppState>();
+        let cfg = state.config.lock().unwrap();
+        (cfg.models_dir.clone(), cfg.summary_model.clone())
+    };
+    tauri::async_runtime::spawn_blocking(move || summary::run(&models_override, &model_file, &transcript))
         .await
         .map_err(|e| e.to_string())?
+}
+
+/// List the GGUF models available in the models folder, for the summary-model
+/// dropdown. Sorted; empty if the folder is missing or has none.
+#[tauri::command]
+pub fn list_gguf_models(state: tauri::State<AppState>) -> Vec<String> {
+    let dir = {
+        let cfg = state.config.lock().unwrap();
+        crate::paths::models_dir(&cfg.models_dir)
+    };
+    let mut out = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().map(|e| e.eq_ignore_ascii_case("gguf")).unwrap_or(false) {
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    out.push(name.to_string());
+                }
+            }
+        }
+    }
+    out.sort();
+    out
 }
