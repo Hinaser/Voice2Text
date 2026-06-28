@@ -77,12 +77,13 @@ type SidecarIo = (Child, ChildStdin, BufReader<ChildStdout>);
 /// inherited stderr (whisper.cpp logs go to the console).
 fn spawn_process(model: &Path) -> std::io::Result<SidecarIo> {
     let exe = paths::sidecar_exe(SIDECAR_EXE);
-    let mut child = Command::new(&exe)
-        .arg(model)
+    let mut cmd = Command::new(&exe);
+    cmd.arg(model)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()?;
+        .stderr(Stdio::inherit());
+    paths::hide_console(&mut cmd);
+    let mut child = cmd.spawn()?;
     let stdin = child.stdin.take().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "no stdin"))?;
     let stdout = child.stdout.take().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "no stdout"))?;
     Ok((child, stdin, BufReader::new(stdout)))

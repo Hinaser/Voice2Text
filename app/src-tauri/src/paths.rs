@@ -40,3 +40,18 @@ pub fn sidecar_exe(file_name: &str) -> PathBuf {
 fn exe_dir() -> Option<PathBuf> {
     std::env::current_exe().ok().and_then(|p| p.parent().map(PathBuf::from))
 }
+
+/// In release builds, spawn a child with `CREATE_NO_WINDOW` so a console-subsystem
+/// sidecar launched from the (windowed) app doesn't flash its own console window.
+/// In debug builds the app keeps its console and the sidecar inherits it, so logs
+/// stay visible — leave the flag off.
+pub fn hide_console(cmd: &mut std::process::Command) {
+    #[cfg(not(debug_assertions))]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    // Referenced in release via the cfg block; silence the unused warning in debug.
+    let _ = cmd;
+}

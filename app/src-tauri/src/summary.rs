@@ -16,11 +16,13 @@ pub fn run(models_override: &str, transcript: &str) -> Result<String, String> {
         return Err(format!("Summary model not found at {}", model.display()));
     }
     let exe = paths::sidecar_exe(SIDECAR_EXE);
-    let mut child = Command::new(&exe)
-        .arg(&model)
+    let mut cmd = Command::new(&exe);
+    cmd.arg(&model)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+    paths::hide_console(&mut cmd);
+    let mut child = cmd
         .spawn()
         .map_err(|e| format!("failed to start summarizer ({}): {e}", exe.display()))?;
     {

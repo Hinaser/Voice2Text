@@ -1,6 +1,8 @@
-// Console stays visible for now (shows model-load + pipeline logs during early
-// builds). Add `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]`
-// later to hide it in the shipped release.
+// Release builds run as a GUI app (no console window). Debug builds keep the
+// console so model-load + pipeline logs stay visible during development. The
+// GPU sidecars are spawned with CREATE_NO_WINDOW in release so they don't pop
+// their own console windows — see paths::hide_console.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod audio;
 mod commands;
