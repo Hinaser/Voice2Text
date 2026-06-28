@@ -40,6 +40,37 @@ use whisper::{WhisperJob, WhisperSidecar};
 /// Capture/recognition sample rate (16 kHz mono).
 pub const RATE: usize = 16_000;
 
+/// Capture-session lifecycle, driven from the UI (Start / Pause / Stop). The
+/// pipeline polls this each loop: capture threads are spawned on Running and
+/// torn down on Stop (releasing the audio devices); Paused keeps them alive but
+/// discards incoming audio.
+pub mod capture_state {
+    pub const STOPPED: u8 = 0;
+    pub const RUNNING: u8 = 1;
+    pub const PAUSED: u8 = 2;
+}
+
+/// Shared, atomically-updated capture state. Cheap to clone behind an `Arc`; the
+/// UI mutates it via the `set_capture` command, the pipeline reads it each loop.
+#[derive(Default)]
+pub struct CaptureControl {
+    state: std::sync::atomic::AtomicU8,
+}
+
+impl CaptureControl {
+    pub fn new(initial: u8) -> Self {
+        Self { state: std::sync::atomic::AtomicU8::new(initial) }
+    }
+
+    pub fn get(&self) -> u8 {
+        self.state.load(Ordering::SeqCst)
+    }
+
+    pub fn set(&self, value: u8) {
+        self.state.store(value, Ordering::SeqCst);
+    }
+}
+
 /// Which side of the conversation an utterance came from.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Source {
@@ -80,6 +111,7 @@ pub fn run(
     app: AppHandle,
     running: Arc<AtomicBool>,
     config: Arc<Mutex<Config>>,
+    control: Arc<CaptureControl>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ui = Ui::new(app);
     let cfg0 = config.lock().unwrap().clone();
@@ -106,83 +138,132 @@ pub fn run(
     // up the configured folder at that moment.
     let mut fallback_writer: Option<TranscriptWriter> = None;
 
-    ui.status("listening", listening_detail(mic_track.is_some(), whisper.is_some()));
-
     // Persistent status-bar summary: which endpoints we're capturing and where
     // the transcript goes. The file path follows later via `saving` once opened.
     let sources = crate::audio::capture_source_names(&cfg0.output_device, &cfg0.input_device, mic_track.is_some());
     ui.capture(sources, cfg0.save_transcript, cfg0.resolved_save_dir().to_string_lossy().into_owned());
 
-    // Capture threads → one tagged channel.
-    let (tx, rx) = mpsc::channel::<(Source, Vec<f32>)>();
-    let sys_cap = spawn_capture(Source::System, &cfg0.output_device, &running, &tx, &ui);
-    let mic_cap = mic_track
-        .as_ref()
-        .map(|_| spawn_capture(Source::Mic, &cfg0.input_device, &running, &tx, &ui));
-    drop(tx);
-
     let mut echo = EchoFilter::new();
 
+    // Outer session loop: idle until the UI starts capture, run a capture
+    // session until it's stopped (or the app exits), then loop. Models above are
+    // loaded once and reused across sessions; only the audio devices are
+    // acquired/released per session.
     while running.load(Ordering::SeqCst) {
-        let (source, chunk) = match rx.recv_timeout(Duration::from_millis(100)) {
-            Ok(v) => v,
-            Err(mpsc::RecvTimeoutError::Timeout) => continue,
-            Err(_) => break,
-        };
-        let track = match source {
-            Source::System => &mut sys_track,
-            Source::Mic => match mic_track.as_mut() {
-                Some(t) => t,
-                None => continue,
-            },
-        };
-
-        track.asr.accept(&chunk);
-        track.utt.extend_from_slice(&chunk);
-
-        let text = track.asr.partial();
-        if !text.is_empty() && text != track.last_partial {
-            ui.partial(source, text::truecase_partial(&text));
-            track.last_partial = text.clone();
+        // Idle until Started (or the app exits).
+        if control.get() != capture_state::RUNNING {
+            ui.status("idle", "Capture stopped — press ▶ to start");
+            while running.load(Ordering::SeqCst) && control.get() != capture_state::RUNNING {
+                thread::sleep(Duration::from_millis(100));
+            }
+            if !running.load(Ordering::SeqCst) {
+                break;
+            }
         }
 
-        if track.asr.is_endpoint() {
-            if !text.is_empty() {
-                let cfg = config.lock().unwrap().clone();
-                let polished = text::finalize(&text, if cfg.punctuation { punct.as_mut() } else { None });
-                let now = Instant::now();
-                let time = Local::now().format("%H:%M:%S").to_string();
+        // Start a capture session: spawn the device threads onto a tagged channel.
+        let session = Arc::new(AtomicBool::new(true));
+        ui.status("listening", listening_detail(mic_track.is_some(), whisper.is_some()));
+        let (tx, rx) = mpsc::channel::<(Source, Vec<f32>)>();
+        let sys_cap = spawn_capture(Source::System, &cfg0.output_device, &session, &tx, &ui);
+        let mic_cap = mic_track
+            .as_ref()
+            .map(|_| spawn_capture(Source::Mic, &cfg0.input_device, &session, &tx, &ui));
+        drop(tx);
 
-                let (speaker, suppress) = classify(source, &polished, &cfg, &mut diarizer, &mut echo, now, &track.utt);
+        let mut paused = false;
+        while running.load(Ordering::SeqCst) && control.get() != capture_state::STOPPED {
+            // Paused: keep the devices open but drop audio so nothing is
+            // transcribed; reset the in-flight utterances so resume starts clean.
+            if control.get() == capture_state::PAUSED {
+                if !paused {
+                    paused = true;
+                    ui.status("paused", "Capture paused");
+                    sys_track.reset();
+                    ui.clear_partial(Source::System);
+                    if let Some(t) = mic_track.as_mut() {
+                        t.reset();
+                    }
+                    ui.clear_partial(Source::Mic);
+                }
+                // Drain and discard so the channel doesn't back up while paused.
+                let _ = rx.recv_timeout(Duration::from_millis(100));
+                continue;
+            }
+            if paused {
+                paused = false;
+                ui.status("listening", listening_detail(mic_track.is_some(), whisper.is_some()));
+            }
 
-                if !suppress {
-                    ui.final_line(time.clone(), source, speaker.clone(), polished.clone());
-                    ui.clear_partial(source);
+            let (source, chunk) = match rx.recv_timeout(Duration::from_millis(100)) {
+                Ok(v) => v,
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(_) => break,
+            };
+            let track = match source {
+                Source::System => &mut sys_track,
+                Source::Mic => match mic_track.as_mut() {
+                    Some(t) => t,
+                    None => continue,
+                },
+            };
 
-                    if cfg.save_transcript {
-                        let label = transcript::speaker_label(&speaker);
-                        if let Some(w) = whisper.as_ref() {
-                            // Sidecar re-transcribes and writes the clean line.
-                            w.send(WhisperJob { audio: track.utt.clone(), time, label });
-                        } else {
-                            let writer = fallback_writer
-                                .get_or_insert_with(|| TranscriptWriter::new(cfg.resolved_save_dir()));
-                            match writer.write_line(&time, &label, &polished) {
-                                Ok(Some(path)) => ui.saving(path.to_string_lossy().into_owned()),
-                                Ok(None) => {}
-                                Err(e) => ui.status("error", format!("Save failed: {e}")),
+            track.asr.accept(&chunk);
+            track.utt.extend_from_slice(&chunk);
+
+            let text = track.asr.partial();
+            if !text.is_empty() && text != track.last_partial {
+                ui.partial(source, text::truecase_partial(&text));
+                track.last_partial = text.clone();
+            }
+
+            if track.asr.is_endpoint() {
+                if !text.is_empty() {
+                    let cfg = config.lock().unwrap().clone();
+                    let polished = text::finalize(&text, if cfg.punctuation { punct.as_mut() } else { None });
+                    let now = Instant::now();
+                    let time = Local::now().format("%H:%M:%S").to_string();
+
+                    let (speaker, suppress) = classify(source, &polished, &cfg, &mut diarizer, &mut echo, now, &track.utt);
+
+                    if !suppress {
+                        ui.final_line(time.clone(), source, speaker.clone(), polished.clone());
+                        ui.clear_partial(source);
+
+                        if cfg.save_transcript {
+                            let label = transcript::speaker_label(&speaker);
+                            if let Some(w) = whisper.as_ref() {
+                                // Sidecar re-transcribes and writes the clean line.
+                                w.send(WhisperJob { audio: track.utt.clone(), time, label });
+                            } else {
+                                let writer = fallback_writer
+                                    .get_or_insert_with(|| TranscriptWriter::new(cfg.resolved_save_dir()));
+                                match writer.write_line(&time, &label, &polished) {
+                                    Ok(Some(path)) => ui.saving(path.to_string_lossy().into_owned()),
+                                    Ok(None) => {}
+                                    Err(e) => ui.status("error", format!("Save failed: {e}")),
+                                }
                             }
                         }
                     }
                 }
+                track.reset();
             }
-            track.reset();
         }
-    }
 
-    let _ = sys_cap.join();
-    if let Some(h) = mic_cap {
-        let _ = h.join();
+        // End the session: stop the device threads (releasing the endpoints),
+        // then reset recognizer state so the next session starts fresh.
+        session.store(false, Ordering::SeqCst);
+        let _ = sys_cap.join();
+        if let Some(h) = mic_cap {
+            let _ = h.join();
+        }
+        sys_track.reset();
+        ui.clear_partial(Source::System);
+        if let Some(t) = mic_track.as_mut() {
+            t.reset();
+        }
+        ui.clear_partial(Source::Mic);
     }
     Ok(())
 }

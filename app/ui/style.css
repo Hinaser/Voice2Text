@@ -57,6 +57,8 @@ html, body {
 }
 .dot.loading   { background: #fbbf24; }
 .dot.listening { background: #34d399; box-shadow: 0 0 6px #34d39988; }
+.dot.paused    { background: #fbbf24; }
+.dot.idle      { background: #6b7280; }
 .dot.error     { background: #f87171; }
 
 #titlebar button {
@@ -74,6 +76,23 @@ html, body {
 #titlebar button:active { background: rgba(255, 255, 255, 0.20); }
 #close:hover { background: #e0484d; color: #fff; }
 #pin.off { opacity: 0.4; }
+
+/* ---- capture controls (Start / Pause / Stop) ---- */
+#titlebar button.cap { font-size: 11px; padding: 4px 5px; }
+#titlebar button.cap:disabled {
+  opacity: 0.3;
+  cursor: default;
+  background: transparent;
+}
+#cap-start.active { color: #34d399; }
+#cap-pause.active { color: #fbbf24; }
+.cap-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 2px 2px;
+  background: rgba(255, 255, 255, 0.12);
+  flex: 0 0 auto;
+}
 
 /* ---- transcript ---- */
 #transcript {

@@ -53,6 +53,9 @@ fn register_hotkey(app: &tauri::AppHandle, hotkey: &str) {
 
 fn main() {
     let running = Arc::new(AtomicBool::new(true));
+    // Capture starts active on launch (matching prior always-on behavior); the
+    // UI's Start/Pause/Stop buttons drive it from there.
+    let capture = Arc::new(pipeline::CaptureControl::new(pipeline::capture_state::RUNNING));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -67,6 +70,7 @@ fn main() {
         )
         .setup({
             let running = running.clone();
+            let capture = capture.clone();
             move |app| {
                 let config_path = app
                     .path()
@@ -79,12 +83,13 @@ fn main() {
 
                 register_hotkey(&app.handle().clone(), &config.lock().unwrap().hotkey.clone());
 
-                app.manage(AppState { config: config.clone(), config_path });
+                app.manage(AppState { config: config.clone(), config_path, capture: capture.clone() });
 
                 let handle = app.handle().clone();
                 let run_flag = running.clone();
+                let capture_flag = capture.clone();
                 std::thread::spawn(move || {
-                    if let Err(e) = pipeline::run(handle, run_flag, config) {
+                    if let Err(e) = pipeline::run(handle, run_flag, config, capture_flag) {
                         eprintln!("pipeline error: {e}");
                     }
                 });
@@ -110,6 +115,8 @@ fn main() {
             commands::summarize,
             commands::list_audio_devices,
             commands::list_gguf_models,
+            commands::set_capture,
+            commands::get_capture,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

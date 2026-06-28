@@ -8,6 +8,7 @@ use tauri::Manager;
 
 use crate::audio;
 use crate::config::Config;
+use crate::pipeline::{capture_state, CaptureControl};
 use crate::summary;
 
 #[derive(serde::Serialize)]
@@ -34,6 +35,32 @@ pub fn list_audio_devices() -> Result<AudioDevices, String> {
 pub struct AppState {
     pub config: Arc<Mutex<Config>>,
     pub config_path: PathBuf,
+    pub capture: Arc<CaptureControl>,
+}
+
+/// Set the capture-session state from the UI's Start / Pause / Stop buttons.
+/// The pipeline picks the change up on its next loop (well under a second).
+#[tauri::command]
+pub fn set_capture(state: tauri::State<AppState>, mode: String) -> Result<(), String> {
+    let value = match mode.as_str() {
+        "start" => capture_state::RUNNING,
+        "pause" => capture_state::PAUSED,
+        "stop" => capture_state::STOPPED,
+        other => return Err(format!("unknown capture mode: {other}")),
+    };
+    state.capture.set(value);
+    Ok(())
+}
+
+/// Current capture state as a UI-facing string, so the buttons can sync on load
+/// (e.g. after a webview reload). One of "running" / "paused" / "stopped".
+#[tauri::command]
+pub fn get_capture(state: tauri::State<AppState>) -> &'static str {
+    match state.capture.get() {
+        capture_state::RUNNING => "running",
+        capture_state::PAUSED => "paused",
+        _ => "stopped",
+    }
 }
 
 #[tauri::command]
