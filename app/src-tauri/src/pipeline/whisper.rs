@@ -38,7 +38,10 @@ impl WhisperSidecar {
     /// emitting a status) if the process can't start or fails the handshake, so
     /// the caller falls back to writing streaming text.
     pub fn spawn(model: &Path, config: Arc<Mutex<Config>>, ui: Ui) -> Option<Self> {
-        let (mut child, stdin, mut reader) = match spawn_process(model) {
+        // The sidecar takes the transcription language at startup (per-utterance
+        // jobs reuse it); "auto" lets Whisper detect each utterance's language.
+        let language = config.lock().unwrap().language.clone();
+        let (mut child, stdin, mut reader) = match spawn_process(model, &language) {
             Ok(io) => io,
             Err(e) => {
                 ui.status("error", format!("Whisper sidecar failed, saving streaming text: {e}"));
@@ -75,10 +78,11 @@ type SidecarIo = (Child, ChildStdin, BufReader<ChildStdout>);
 
 /// Spawn the sidecar with piped stdin/stdout (binary jobs / text results) and
 /// inherited stderr (whisper.cpp logs go to the console).
-fn spawn_process(model: &Path) -> std::io::Result<SidecarIo> {
+fn spawn_process(model: &Path, language: &str) -> std::io::Result<SidecarIo> {
     let exe = paths::sidecar_exe(SIDECAR_EXE);
     let mut cmd = Command::new(&exe);
     cmd.arg(model)
+        .arg(language)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());

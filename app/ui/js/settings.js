@@ -7,6 +7,7 @@ const el = {
   save: document.getElementById("cfg-save"),
   saveDir: document.getElementById("cfg-savedir"),
   whisper: document.getElementById("cfg-whisper"),
+  language: document.getElementById("cfg-language"),
   punct: document.getElementById("cfg-punct"),
   diar: document.getElementById("cfg-diar"),
   mic: document.getElementById("cfg-mic"),
@@ -113,6 +114,7 @@ export function syncSettingsForm() {
   el.save.checked = config.save_transcript;
   el.saveDir.value = config.save_dir;
   el.whisper.checked = config.whisper_transcript;
+  el.language.value = config.language;
   el.punct.checked = config.punctuation;
   el.diar.checked = config.diarization;
   el.mic.checked = config.mic_capture;
@@ -146,6 +148,7 @@ export function initSettings() {
 
   bindBool(el.save, "save_transcript");
   bindBool(el.whisper, "whisper_transcript");
+  bindText(el.language, "language");
   bindBool(el.punct, "punctuation");
   bindBool(el.diar, "diarization");
   bindBool(el.mic, "mic_capture");

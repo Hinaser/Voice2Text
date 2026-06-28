@@ -59,6 +59,19 @@
         </label>
 
         <label class="row col">
+          <span>Transcript language (Whisper) <em>(restart)</em></span>
+          <select id="cfg-language">
+            <option value="auto">Auto-detect</option>
+            <option value="en">English</option>
+            <option value="ja">Japanese (日本語)</option>
+            <option value="zh">Chinese (中文)</option>
+            <option value="fr">French (Français)</option>
+            <option value="it">Italian (Italiano)</option>
+            <option value="es">Spanish (Español)</option>
+          </select>
+        </label>
+
+        <label class="row col">
           <span>Summary model (GPU) <em>(.gguf in models folder)</em></span>
           <select id="cfg-summary-model"></select>
         </label>
@@ -116,7 +129,7 @@
 
         <p class="note">Saving, punctuation, speaker labels and echo suppression
           apply immediately. Microphone capture, the clean Whisper transcript,
-          the hotkey and the models folder take effect next launch.</p>
+          its language, the hotkey and the models folder take effect next launch.</p>
       </div>
     </div>
 

@@ -95,7 +95,13 @@ fn run(model: &str, language: &str) -> Result<(), i32> {
 
 fn transcribe(state: &mut whisper_rs::WhisperState, samples: &[f32], language: &str) -> String {
     let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-    params.set_language(Some(language));
+    // "auto" (or empty) => let Whisper detect the language per utterance; any
+    // other value pins it (e.g. "en", "ja", "zh", "fr", "it", "es").
+    let lang = match language {
+        "" | "auto" => None,
+        l => Some(l),
+    };
+    params.set_language(lang);
     params.set_print_progress(false);
     params.set_print_realtime(false);
     params.set_print_timestamps(false);
