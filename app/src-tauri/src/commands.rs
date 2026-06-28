@@ -6,8 +6,29 @@ use std::sync::{Arc, Mutex};
 
 use tauri::Manager;
 
+use crate::audio;
 use crate::config::Config;
 use crate::summary;
+
+#[derive(serde::Serialize)]
+pub struct AudioDevice {
+    id: String,
+    name: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct AudioDevices {
+    output: Vec<AudioDevice>,
+    input: Vec<AudioDevice>,
+}
+
+/// List active speaker-output and microphone endpoints for the settings UI.
+#[tauri::command]
+pub fn list_audio_devices() -> Result<AudioDevices, String> {
+    let (render, capture) = audio::list_devices().map_err(|e| e.to_string())?;
+    let map = |v: Vec<(String, String)>| v.into_iter().map(|(id, name)| AudioDevice { id, name }).collect();
+    Ok(AudioDevices { output: map(render), input: map(capture) })
+}
 
 /// Shared state handed to every command.
 pub struct AppState {

@@ -2,6 +2,7 @@
 // builds). Add `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]`
 // later to hide it in the shipped release.
 
+mod audio;
 mod commands;
 mod config;
 mod paths;
@@ -102,6 +103,7 @@ fn main() {
             commands::open_save_dir,
             commands::export_transcript,
             commands::summarize,
+            commands::list_audio_devices,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

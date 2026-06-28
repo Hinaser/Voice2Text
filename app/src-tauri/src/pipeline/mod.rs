@@ -110,8 +110,10 @@ pub fn run(
 
     // Capture threads → one tagged channel.
     let (tx, rx) = mpsc::channel::<(Source, Vec<f32>)>();
-    let sys_cap = spawn_capture(Source::System, &running, &tx, &ui);
-    let mic_cap = mic_track.as_ref().map(|_| spawn_capture(Source::Mic, &running, &tx, &ui));
+    let sys_cap = spawn_capture(Source::System, &cfg0.output_device, &running, &tx, &ui);
+    let mic_cap = mic_track
+        .as_ref()
+        .map(|_| spawn_capture(Source::Mic, &cfg0.input_device, &running, &tx, &ui));
     drop(tx);
 
     let mut echo = EchoFilter::new();
@@ -206,13 +208,14 @@ fn classify(
 
 fn spawn_capture(
     source: Source,
+    device_id: &str,
     running: &Arc<AtomicBool>,
     tx: &mpsc::Sender<(Source, Vec<f32>)>,
     ui: &Ui,
 ) -> thread::JoinHandle<()> {
-    let (running, tx, ui) = (running.clone(), tx.clone(), ui.clone());
+    let (running, tx, ui, device_id) = (running.clone(), tx.clone(), ui.clone(), device_id.to_string());
     thread::spawn(move || {
-        if let Err(e) = capture::run(source, &running, &tx) {
+        if let Err(e) = capture::run(source, &device_id, &running, &tx) {
             let which = if source == Source::Mic { "Microphone" } else { "System audio" };
             ui.status("error", format!("{which} capture stopped: {e}"));
         }

@@ -16,7 +16,12 @@ param(
     [switch]$SkipBuild,
     # CPU-only build: no Whisper sidecar, CUDA DLLs, or large GGML model.
     # Live captions + streaming-saved transcript only; ~300 MB.
-    [switch]$Slim
+    [switch]$Slim,
+    # Ship binaries only — no model weights. Bundles Fetch-Models.ps1 instead so
+    # the user downloads weights from their official sources on first run. This is
+    # the form used for public GitHub Releases (keeps the asset small and avoids
+    # redistributing the Qwen weights, whose license is non-commercial).
+    [switch]$NoModels
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
@@ -72,24 +77,35 @@ if (-not $Slim) {
     }
 }
 
-# 4. models (only the ones the app loads — skip the m1 capture-test junk).
-# The 1 GB Whisper model is only needed for the GPU clean transcript.
-$modelItems = @(
-    'sherpa-onnx-streaming-zipformer-en-2023-06-26',
-    'sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12',
-    '3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx'
-)
-if (-not $Slim) {
-    $modelItems += 'ggml-large-v3-q5_0.bin'            # Whisper clean transcript
-    $modelItems += 'Qwen2.5-3B-Instruct-Q4_K_M.gguf'  # local-LLM summary
-}
-foreach ($m in $modelItems) {
-    $src = Join-Path $models $m
-    if (Test-Path $src) {
-        Write-Host "    + models\$m"
-        Copy-Item $src $dstModels -Recurse
-    } else {
-        Write-Warning "missing model: $m"
+# 4. models. Either bundle the weights the app loads (skip the m1 capture-test
+# junk) or, with -NoModels, ship the fetch script and an empty models\ folder.
+if ($NoModels) {
+    $fetch = Join-Path $PSScriptRoot 'Fetch-Models.ps1'
+    $dstScripts = Join-Path $OutDir 'scripts'
+    New-Item -ItemType Directory -Path $dstScripts -Force | Out-Null
+    # Lands at <bundle>\scripts\Fetch-Models.ps1; its default OutDir is
+    # $PSScriptRoot\..\models => <bundle>\models, which we created above.
+    Copy-Item $fetch $dstScripts
+    Write-Host "    + scripts\Fetch-Models.ps1 (weights downloaded on first run)"
+} else {
+    # The 1 GB Whisper model is only needed for the GPU clean transcript.
+    $modelItems = @(
+        'sherpa-onnx-streaming-zipformer-en-2023-06-26',
+        'sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12',
+        '3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx'
+    )
+    if (-not $Slim) {
+        $modelItems += 'ggml-large-v3-q5_0.bin'            # Whisper clean transcript
+        $modelItems += 'Qwen2.5-3B-Instruct-Q4_K_M.gguf'  # local-LLM summary
+    }
+    foreach ($m in $modelItems) {
+        $src = Join-Path $models $m
+        if (Test-Path $src) {
+            Write-Host "    + models\$m"
+            Copy-Item $src $dstModels -Recurse
+        } else {
+            Write-Warning "missing model: $m"
+        }
     }
 }
 
@@ -99,12 +115,16 @@ $whisperNote = if ($Slim) {
 } else {
     "Requires a CUDA GPU for the clean Whisper transcript (bundled, runs locally);`r`nwithout one, turn that off in Settings and live captions still work on CPU."
 }
+$modelNote = if ($NoModels) {
+    "`r`nFIRST RUN — download the models (one time):`r`n  powershell -ExecutionPolicy Bypass -File scripts\Fetch-Models.ps1$(if ($Slim) { ' -CpuOnly' })`r`nThis pulls the model weights from their official sources into models\."
+} else { '' }
 @"
 Voice2Text — portable build
 Run Voice2Text.exe. Live meeting captions appear in a floating overlay; the
 transcript is saved to Documents\Voice2Text (configurable via the gear icon).
 Everything runs locally.
 $whisperNote
+$modelNote
 "@ | Set-Content (Join-Path $OutDir 'README.txt')
 
 $size = (Get-ChildItem $OutDir -Recurse | Measure-Object Length -Sum).Sum / 1MB

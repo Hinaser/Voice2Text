@@ -5,20 +5,23 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 
-use wasapi::{DeviceEnumerator, Direction, Role, SampleType, StreamMode, WaveFormat};
+use wasapi::{DeviceEnumerator, Direction, SampleType, StreamMode, WaveFormat};
+
+use crate::audio;
 
 use super::{Source, RATE};
 
-/// Capture one source until `running` clears. System = default render endpoint
-/// opened for loopback; Mic = default capture endpoint. WASAPI autoconverts to
-/// 16 kHz mono f32 for us.
-pub fn run(source: Source, running: &AtomicBool, tx: &Sender<(Source, Vec<f32>)>) -> Result<(), Box<dyn std::error::Error>> {
+/// Capture one source until `running` clears. System = a render endpoint opened
+/// for loopback; Mic = a capture endpoint. `device_id` selects a specific
+/// endpoint (empty = default). WASAPI autoconverts to 16 kHz mono f32 for us.
+pub fn run(source: Source, device_id: &str, running: &AtomicBool, tx: &Sender<(Source, Vec<f32>)>) -> Result<(), Box<dyn std::error::Error>> {
     wasapi::initialize_mta().ok()?;
     let enumerator = DeviceEnumerator::new()?;
-    let device = match source {
-        Source::System => enumerator.get_default_device_for_role(&Direction::Render, &Role::Console)?,
-        Source::Mic => enumerator.get_default_device_for_role(&Direction::Capture, &Role::Console)?,
+    let direction = match source {
+        Source::System => Direction::Render,
+        Source::Mic => Direction::Capture,
     };
+    let device = audio::resolve_device(&enumerator, &direction, device_id)?;
     let mut client = device.get_iaudioclient()?;
     let fmt = WaveFormat::new(32, 32, &SampleType::Float, RATE, 1, None);
     let (_def, min_time) = client.get_device_period()?;

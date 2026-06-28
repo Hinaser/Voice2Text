@@ -8,6 +8,8 @@ export const config = {
   save_dir: "",
   punctuation: true,
   diarization: true,
+  output_device: "",
+  input_device: "",
   mic_capture: true,
   echo_suppression: true,
   whisper_transcript: true,

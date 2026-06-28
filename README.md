@@ -55,6 +55,27 @@ Crates: `app/src-tauri` (app), `app/whisper-sidecar`, `app/llama-sidecar`. The
 (`m05-whisper-cuda`, `m1-capture`, `m35-sherpa`, `live-stt`, `live-stream`) are
 kept for reference. See [`DESIGN.md`](DESIGN.md) for the full design history.
 
+## Download
+
+Prebuilt portable bundles are on the [**Releases**](https://github.com/Hinaser/Voice2Text/releases)
+page — no build toolchain required:
+
+- **Full (GPU)** — live captions + the clean Whisper transcript + the local-LLM
+  summary. Needs an NVIDIA GPU (the CUDA runtime DLLs are bundled).
+- **Slim (CPU-only)** — live captions + a streaming-quality saved transcript, no
+  GPU needed.
+
+Unzip, then run `Voice2Text.exe`. The bundles ship **binaries only**; on first
+run, download the model weights once with the included script:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\Fetch-Models.ps1   # add -CpuOnly for the slim build
+```
+
+(Weights aren't bundled to keep the download small and because some model
+licenses don't permit redistribution — see
+[THIRD-PARTY-MODELS.md](THIRD-PARTY-MODELS.md).)
+
 ## Requirements
 
 - **Windows 11** (WebView2 is preinstalled).
@@ -77,8 +98,8 @@ cd app; npm install; cd ..
 .\scripts\Build-Cuda.ps1 -CrateDir ..\app\whisper-sidecar   # GPU clean transcript
 .\scripts\Build-Cuda.ps1 -CrateDir ..\app\llama-sidecar     # GPU summary
 
-# 4. Run
-.\app\src-tauri\target\release\voice2text.exe
+# 4. Run (all workspace crates build into the shared app\target\release)
+.\app\target\release\voice2text.exe
 ```
 
 ## Packaging
@@ -93,16 +114,30 @@ cd app; npm install; cd ..
 
 `Stage-Portable.ps1` bundles the exe, the runtime DLLs, the CUDA runtime DLLs
 (for the GPU build), and the models into a folder that runs on a clean Windows 11
-machine with only an NVIDIA driver. (A one-click NSIS installer is wired in
-`scripts/Build-Installer.ps1` but currently blocked by a Tauri bundler issue —
-see the comment in that script.)
+machine with only an NVIDIA driver. Add `-NoModels` to ship binaries + the fetch
+script instead of the weights (the form used for Releases). (A one-click NSIS
+installer is wired in `scripts/Build-Installer.ps1` but currently blocked by a
+Tauri bundler issue — see the comment in that script.)
+
+### Publishing a release
+
+`Publish-Release.ps1` builds, stages a binaries-only zip, **creates and pushes a
+git tag**, and uploads the assets to a GitHub Release via the `gh` CLI. The full
+(GPU) bundle is always built; `-IncludeSlim` *also* attaches the CPU-only one.
+
+```powershell
+.\scripts\Publish-Release.ps1 -Tag v0.1.0                 # GPU bundle only
+.\scripts\Publish-Release.ps1 -Tag v0.1.0 -IncludeSlim    # GPU bundle + CPU-only bundle
+.\scripts\Publish-Release.ps1 -Tag v0.1.0 -Draft          # stage as a draft to review first
+```
 
 ## Configuration
 
 Settings persist to `%APPDATA%\com.voice2text.overlay\config.json` and are
 editable from the in-app ⚙ panel: transcript saving + folder, punctuation,
-speaker labels, microphone capture, echo suppression, the Whisper clean
-transcript, the show/hide hotkey, models folder, and appearance.
+speaker labels, microphone capture, echo suppression, the system-audio and
+microphone **source devices**, the Whisper clean transcript, the show/hide
+hotkey, models folder, and appearance.
 
 ## Licensing
 

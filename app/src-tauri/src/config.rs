@@ -18,6 +18,11 @@ pub struct Config {
     pub punctuation: bool,
     /// Label utterances by detected speaker.
     pub diarization: bool,
+    /// System-audio (speaker output) endpoint id to loopback-capture. Empty =
+    /// default playback device. Applies on restart.
+    pub output_device: String,
+    /// Microphone endpoint id to capture. Empty = default. Applies on restart.
+    pub input_device: String,
     /// Capture the microphone too, labeled "You". Applies on restart.
     pub mic_capture: bool,
     /// Drop mic lines that echo attendees' audio coming from the speakers.
@@ -45,6 +50,8 @@ impl Default for Config {
             save_dir: String::new(),
             punctuation: true,
             diarization: true,
+            output_device: String::new(),
+            input_device: String::new(),
             mic_capture: true,
             echo_suppression: true,
             whisper_transcript: true,
