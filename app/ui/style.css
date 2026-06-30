@@ -255,6 +255,11 @@ html, body {
   height: 15px;
   accent-color: #60a5fa;
 }
+.settings-body input[type="range"] {
+  width: 100%;
+  accent-color: #60a5fa;
+  cursor: pointer;
+}
 
 .settings-body button {
   background: rgba(255, 255, 255, 0.10);

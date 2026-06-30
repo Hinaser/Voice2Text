@@ -27,9 +27,18 @@ pub struct Config {
     pub mic_capture: bool,
     /// Drop mic lines that echo attendees' audio coming from the speakers.
     pub echo_suppression: bool,
+    /// Run signal-level acoustic echo cancellation on the mic stream (using the
+    /// loopback as reference) before recognition, so the attendees' audio is
+    /// removed from the mic audio rather than only de-duplicated as text.
+    /// Applies on restart.
+    pub acoustic_echo_cancel: bool,
     /// Re-transcribe each utterance with Whisper (GPU) for a clean saved
     /// transcript; live captions stay streaming. Applies on restart.
     pub whisper_transcript: bool,
+    /// Polish each finalized line with the local LLM, using recent context to
+    /// fix speech-recognition errors (homophones, names, dropped words). Runs on
+    /// the Whisper text, so it needs `whisper_transcript`. Applies on restart.
+    pub llm_correction: bool,
     /// Whisper transcription language for the saved transcript: a Whisper code
     /// ("en", "ja", "zh", "fr", "it", "es") or "auto" to detect per utterance.
     /// Live captions are unaffected (English-only). Applies on restart.
@@ -61,7 +70,9 @@ impl Default for Config {
             input_device: String::new(),
             mic_capture: true,
             echo_suppression: true,
+            acoustic_echo_cancel: true,
             whisper_transcript: true,
+            llm_correction: true,
             language: "auto".to_string(),
             summary_model: "Qwen2.5-3B-Instruct-Q4_K_M.gguf".to_string(),
             font_size: 18,

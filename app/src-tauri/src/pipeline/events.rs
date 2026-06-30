@@ -13,9 +13,19 @@ struct Partial {
 
 #[derive(Clone, serde::Serialize)]
 struct Final {
+    /// Stable per-utterance id so a later clean/corrected version can replace it.
+    id: u64,
     time: String,
     source: &'static str,
     speaker: String,
+    text: String,
+}
+
+/// Replace the text of an already-emitted final line (Whisper clean text, then
+/// the LLM-polished version) in place, identified by its `id`.
+#[derive(Clone, serde::Serialize)]
+struct Replace {
+    id: u64,
     text: String,
 }
 
@@ -65,8 +75,13 @@ impl Ui {
         self.partial(source, String::new());
     }
 
-    pub fn final_line(&self, time: String, source: Source, speaker: String, text: String) {
-        let _ = self.app.emit("final", Final { time, source: source.tag(), speaker, text });
+    pub fn final_line(&self, id: u64, time: String, source: Source, speaker: String, text: String) {
+        let _ = self.app.emit("final", Final { id, time, source: source.tag(), speaker, text });
+    }
+
+    /// Swap in a refined version of a previously emitted final line.
+    pub fn replace_line(&self, id: u64, text: String) {
+        let _ = self.app.emit("replace", Replace { id, text });
     }
 
     pub fn status(&self, state: &'static str, detail: impl Into<String>) {

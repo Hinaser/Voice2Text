@@ -8,10 +8,13 @@
 //!
 //! Each concern lives in its own submodule; this file is just orchestration.
 
+mod aec;
 mod capture;
+mod corrector;
 mod diarize;
 mod echo;
 mod events;
+mod seglog;
 mod text;
 mod transcript;
 mod whisper;
@@ -31,6 +34,7 @@ use crate::config::Config;
 use crate::paths;
 use crate::streaming::Streamer;
 
+use aec::Aec;
 use diarize::Diarizer;
 use echo::EchoFilter;
 use events::Ui;
@@ -144,6 +148,15 @@ pub fn run(
     ui.capture(sources, cfg0.save_transcript, cfg0.resolved_save_dir().to_string_lossy().into_owned());
 
     let mut echo = EchoFilter::new();
+    // Signal-level echo cancellation: only meaningful when capturing the mic,
+    // and only built when enabled. Reset per session below alongside the tracks.
+    let mut aec = (cfg0.mic_capture && cfg0.acoustic_echo_cancel).then(Aec::new);
+    // Monotonic id per finalized line, stable across capture sessions so a later
+    // Whisper/LLM refinement can replace the right line in the UI.
+    let mut line_id: u64 = 0;
+    // For segment diagnostics: when the previous line (per source) finalized, so
+    // we can log the inter-utterance gap.
+    let mut last_final: std::collections::HashMap<&'static str, Instant> = std::collections::HashMap::new();
 
     // Outer session loop: idle until the UI starts capture, run a capture
     // session until it's stopped (or the app exits), then loop. Models above are
@@ -184,6 +197,9 @@ pub fn run(
                     if let Some(t) = mic_track.as_mut() {
                         t.reset();
                     }
+                    if let Some(a) = aec.as_mut() {
+                        a.reset();
+                    }
                     ui.clear_partial(Source::Mic);
                 }
                 // Drain and discard so the channel doesn't back up while paused.
@@ -200,6 +216,18 @@ pub fn run(
                 Err(mpsc::RecvTimeoutError::Timeout) => continue,
                 Err(_) => break,
             };
+
+            // Signal-level AEC: the loopback is the echo reference; the mic is
+            // cleaned before it reaches the recognizer (and the saved audio).
+            let chunk = match (source, aec.as_mut()) {
+                (Source::System, Some(a)) => {
+                    a.push_reference(&chunk);
+                    chunk
+                }
+                (Source::Mic, Some(a)) => a.process_capture(&chunk),
+                _ => chunk,
+            };
+
             let track = match source {
                 Source::System => &mut sys_track,
                 Source::Mic => match mic_track.as_mut() {
@@ -215,6 +243,11 @@ pub fn run(
             if !text.is_empty() && text != track.last_partial {
                 ui.partial(source, text::truecase_partial(&text));
                 track.last_partial = text.clone();
+                // Feed the system partial to the echo filter so a mic echo that
+                // finalizes before the matching system line can still be caught.
+                if source == Source::System {
+                    echo.record_partial(Instant::now(), &text);
+                }
             }
 
             if track.asr.is_endpoint() {
@@ -227,22 +260,41 @@ pub fn run(
                     let (speaker, suppress) = classify(source, &polished, &cfg, &mut diarizer, &mut echo, now, &track.utt);
 
                     if !suppress {
-                        ui.final_line(time.clone(), source, speaker.clone(), polished.clone());
+                        let id = line_id;
+                        line_id += 1;
+
+                        if seglog::enabled() {
+                            let gap_ms = last_final
+                                .get(source.tag())
+                                .map(|t| now.duration_since(*t).as_millis() as i64)
+                                .unwrap_or(-1);
+                            let utt_ms = track.utt.len() as u128 * 1000 / RATE as u128;
+                            seglog::log(&format!(
+                                "t={time} id={id} src={} gap_ms={gap_ms} utt_ms={utt_ms} stream={:?}",
+                                source.tag(),
+                                polished
+                            ));
+                            last_final.insert(source.tag(), now);
+                        }
+
+                        ui.final_line(id, time.clone(), source, speaker.clone(), polished.clone());
                         ui.clear_partial(source);
 
-                        if cfg.save_transcript {
-                            let label = transcript::speaker_label(&speaker);
-                            if let Some(w) = whisper.as_ref() {
-                                // Sidecar re-transcribes and writes the clean line.
-                                w.send(WhisperJob { audio: track.utt.clone(), time, label });
-                            } else {
-                                let writer = fallback_writer
-                                    .get_or_insert_with(|| TranscriptWriter::new(cfg.resolved_save_dir()));
-                                match writer.write_line(&time, &label, &polished) {
-                                    Ok(Some(path)) => ui.saving(path.to_string_lossy().into_owned()),
-                                    Ok(None) => {}
-                                    Err(e) => ui.status("error", format!("Save failed: {e}")),
-                                }
+                        let label = transcript::speaker_label(&speaker);
+                        if let Some(w) = whisper.as_ref() {
+                            // Sidecar re-transcribes → replaces the live line with
+                            // clean (then LLM-polished) text and writes the file.
+                            // Sent regardless of save so the live caption is
+                            // upgraded even when not saving; the manager gates the
+                            // file write on save_transcript itself.
+                            w.send(WhisperJob { id, audio: track.utt.clone(), time, label });
+                        } else if cfg.save_transcript {
+                            let writer = fallback_writer
+                                .get_or_insert_with(|| TranscriptWriter::new(cfg.resolved_save_dir()));
+                            match writer.write_line(&time, &label, &polished) {
+                                Ok(Some(path)) => ui.saving(path.to_string_lossy().into_owned()),
+                                Ok(None) => {}
+                                Err(e) => ui.status("error", format!("Save failed: {e}")),
                             }
                         }
                     }
@@ -263,6 +315,9 @@ pub fn run(
         if let Some(t) = mic_track.as_mut() {
             t.reset();
         }
+        if let Some(a) = aec.as_mut() {
+            a.reset();
+        }
         ui.clear_partial(Source::Mic);
     }
     Ok(())
@@ -282,7 +337,7 @@ fn classify(
     match source {
         Source::System => {
             let speaker = if cfg.diarization { diarizer.label(utt) } else { String::new() };
-            echo.record_system(now, polished);
+            echo.record_final(now, polished);
             (speaker, false)
         }
         Source::Mic => {

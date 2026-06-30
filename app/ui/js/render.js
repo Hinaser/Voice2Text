@@ -35,9 +35,13 @@ function scrollToBottom() {
 }
 
 let lastSpeaker = null;
+// id → { entry (history record), tx (text span) } so a later Whisper/LLM
+// refinement can replace the line's text in place.
+const lines = new Map();
 
-function renderFinal({ time, speaker, text, source }) {
-  history.push({ time, speaker, text });
+function renderFinal({ id, time, speaker, text, source }) {
+  const entry = { time, speaker, text };
+  history.push(entry);
   const stick = nearBottom();
 
   const line = document.createElement("div");
@@ -64,8 +68,20 @@ function renderFinal({ time, speaker, text, source }) {
   line.appendChild(tx);
 
   transcript.appendChild(line);
+  if (id !== undefined) lines.set(id, { entry, tx });
   if (source === "me") partialMe.textContent = "";
   else partialOthers.textContent = "";
+  if (stick) scrollToBottom();
+}
+
+// Swap a finalized line's text for a refined version (Whisper clean, then
+// LLM-polished), keeping its place, speaker, and color.
+function renderReplace({ id, text }) {
+  const rec = lines.get(id);
+  if (!rec) return;
+  const stick = nearBottom();
+  rec.entry.text = text;
+  rec.tx.textContent = text;
   if (stick) scrollToBottom();
 }
 
@@ -81,6 +97,7 @@ function renderPartial({ source, text }) {
 
 export function initTranscript() {
   listen("final", (e) => renderFinal(e.payload));
+  listen("replace", (e) => renderReplace(e.payload));
   listen("partial", (e) => renderPartial(e.payload));
 }
 
@@ -89,5 +106,6 @@ export function clearTranscript() {
   partialOthers.textContent = "";
   partialMe.textContent = "";
   history.length = 0;
+  lines.clear();
   lastSpeaker = null;
 }
