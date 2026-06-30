@@ -1,22 +1,27 @@
 // Settings panel: reflects and edits the config mirror, persisting on change.
 import { invoke } from "./tauri.js";
 import { config, persist } from "./state.js";
+import { applyOpacity } from "./controls.js";
 
 const panel = document.getElementById("settings");
 const el = {
   save: document.getElementById("cfg-save"),
   saveDir: document.getElementById("cfg-savedir"),
   whisper: document.getElementById("cfg-whisper"),
+  llm: document.getElementById("cfg-llm"),
   language: document.getElementById("cfg-language"),
   punct: document.getElementById("cfg-punct"),
   diar: document.getElementById("cfg-diar"),
   mic: document.getElementById("cfg-mic"),
+  aec: document.getElementById("cfg-aec"),
   echo: document.getElementById("cfg-echo"),
   output: document.getElementById("cfg-output"),
   input: document.getElementById("cfg-input"),
   summaryModel: document.getElementById("cfg-summary-model"),
   models: document.getElementById("cfg-models"),
   hotkey: document.getElementById("cfg-hotkey"),
+  opacity: document.getElementById("cfg-opacity"),
+  opacityVal: document.getElementById("cfg-opacity-val"),
 };
 
 // Fill the summary-model <select> with the .gguf files found in the models
@@ -114,16 +119,20 @@ export function syncSettingsForm() {
   el.save.checked = config.save_transcript;
   el.saveDir.value = config.save_dir;
   el.whisper.checked = config.whisper_transcript;
+  el.llm.checked = config.llm_correction;
   el.language.value = config.language;
   el.punct.checked = config.punctuation;
   el.diar.checked = config.diarization;
   el.mic.checked = config.mic_capture;
+  el.aec.checked = config.acoustic_echo_cancel;
   el.echo.checked = config.echo_suppression;
   el.output.value = config.output_device;
   el.input.value = config.input_device;
   el.summaryModel.value = config.summary_model;
   el.models.value = config.models_dir;
   el.hotkey.value = config.hotkey;
+  el.opacity.value = config.opacity;
+  el.opacityVal.textContent = Math.round(config.opacity * 100) + "%";
 }
 
 // Bind a checkbox/text input to a config field; persist on change.
@@ -148,10 +157,12 @@ export function initSettings() {
 
   bindBool(el.save, "save_transcript");
   bindBool(el.whisper, "whisper_transcript");
+  bindBool(el.llm, "llm_correction");
   bindText(el.language, "language");
   bindBool(el.punct, "punctuation");
   bindBool(el.diar, "diarization");
   bindBool(el.mic, "mic_capture");
+  bindBool(el.aec, "acoustic_echo_cancel");
   bindBool(el.echo, "echo_suppression");
   bindText(el.output, "output_device");
   bindText(el.input, "input_device");
@@ -159,6 +170,14 @@ export function initSettings() {
   bindText(el.saveDir, "save_dir");
   bindText(el.models, "models_dir");
   bindText(el.hotkey, "hotkey");
+
+  // Background opacity: apply live while dragging, persist when released.
+  el.opacity.addEventListener("input", () => {
+    config.opacity = parseFloat(el.opacity.value);
+    el.opacityVal.textContent = Math.round(config.opacity * 100) + "%";
+    applyOpacity();
+  });
+  el.opacity.addEventListener("change", () => persist());
 
   // Transcript folder: pick (Browse…) or reveal (Open) in Explorer.
   document.getElementById("cfg-browsedir").addEventListener("click", async () => {

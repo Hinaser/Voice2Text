@@ -13,6 +13,7 @@ use std::thread;
 use crate::config::Config;
 use crate::paths;
 
+use super::corrector::Corrector;
 use super::events::Ui;
 use super::transcript::TranscriptWriter;
 
@@ -24,6 +25,8 @@ const SIDECAR_EXE: &str = "whisper-sidecar.exe";
 
 /// A finalized utterance handed to the sidecar for clean re-transcription.
 pub struct WhisperJob {
+    /// UI line id to replace with the clean (then polished) text.
+    pub id: u64,
     pub audio: Vec<f32>,
     pub time: String,
     pub label: String,
@@ -104,6 +107,16 @@ fn manager(
     rx: Receiver<WhisperJob>,
 ) {
     let mut writer: Option<TranscriptWriter> = None;
+    // Optional LLM polish, loaded once. Needs a model; degrades to plain Whisper
+    // text if disabled or unavailable.
+    let mut corrector = {
+        let cfg = config.lock().unwrap().clone();
+        if cfg.llm_correction {
+            Corrector::spawn(&cfg.models_dir, &cfg.summary_model, &ui)
+        } else {
+            None
+        }
+    };
     while let Ok(job) = rx.recv() {
         let cfg = config.lock().unwrap().clone();
         if stdin.write_all(&encode_frame(&job.audio)).and_then(|_| stdin.flush()).is_err() {
@@ -120,14 +133,36 @@ fn manager(
             Ok(_) => {}
         }
         let text = line.trim();
-        if !cfg.save_transcript || text.is_empty() {
+        if text.is_empty() {
             continue;
         }
-        let w = writer.get_or_insert_with(|| TranscriptWriter::new(cfg.resolved_save_dir()));
-        match w.write_line(&job.time, &job.label, text) {
-            Ok(Some(path)) => ui.saving(path.to_string_lossy().into_owned()),
-            Ok(None) => {}
-            Err(e) => ui.status("error", format!("Save failed: {e}")),
+        // Upgrade the live caption from streaming text to Whisper's accurate
+        // transcription of the same utterance.
+        super::seglog::log(&format!("           id={} whisper={:?}", job.id, text));
+        ui.replace_line(job.id, text.to_string());
+
+        // Then optionally LLM-polish that clean text with recent context, and
+        // swap it in again if the correction was accepted. The polished text is
+        // what we save.
+        let final_text = match corrector.as_mut() {
+            Some(c) => {
+                let polished = c.correct(text);
+                if polished != text {
+                    super::seglog::log(&format!("           id={} polished={:?}", job.id, polished));
+                    ui.replace_line(job.id, polished.clone());
+                }
+                polished
+            }
+            None => text.to_string(),
+        };
+
+        if cfg.save_transcript {
+            let w = writer.get_or_insert_with(|| TranscriptWriter::new(cfg.resolved_save_dir()));
+            match w.write_line(&job.time, &job.label, &final_text) {
+                Ok(Some(path)) => ui.saving(path.to_string_lossy().into_owned()),
+                Ok(None) => {}
+                Err(e) => ui.status("error", format!("Save failed: {e}")),
+            }
         }
     }
     let _ = child.kill();
