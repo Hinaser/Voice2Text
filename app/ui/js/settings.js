@@ -2,6 +2,15 @@
 import { invoke } from "./tauri.js";
 import { config, persist } from "./state.js";
 import { applyOpacity } from "./controls.js";
+import { setSaving } from "./statusbar.js";
+
+// Push the current save on/off + resolved folder to the status bar so a live
+// toggle shows immediately (the pipeline already applies it on the next line).
+async function syncSaveStatus() {
+  let dir = "";
+  try { dir = await invoke("save_dir"); } catch {}
+  setSaving(config.save_transcript, dir);
+}
 
 const panel = document.getElementById("settings");
 const el = {
@@ -156,6 +165,10 @@ export function initSettings() {
   document.getElementById("settings-close").addEventListener("click", () => panel.classList.add("hidden"));
 
   bindBool(el.save, "save_transcript");
+  // Save on/off and the folder take effect on the next line; reflect them in the
+  // status bar right away so the toggle visibly does something.
+  el.save.addEventListener("change", syncSaveStatus);
+  el.saveDir.addEventListener("change", syncSaveStatus);
   bindBool(el.whisper, "whisper_transcript");
   bindBool(el.llm, "llm_correction");
   bindText(el.language, "language");
@@ -182,7 +195,7 @@ export function initSettings() {
   // Transcript folder: pick (Browse…) or reveal (Open) in Explorer.
   document.getElementById("cfg-browsedir").addEventListener("click", async () => {
     const dir = await pickFolder(el.saveDir.value.trim() || el.saveDir.placeholder);
-    if (dir) { el.saveDir.value = dir; config.save_dir = dir; persist(); }
+    if (dir) { el.saveDir.value = dir; config.save_dir = dir; persist(); syncSaveStatus(); }
   });
   document.getElementById("cfg-opendir").addEventListener("click", () => {
     config.save_dir = el.saveDir.value.trim();

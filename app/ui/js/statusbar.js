@@ -26,6 +26,15 @@ function renderSave() {
   }
 }
 
+// Reflect a live Settings change (save on/off, folder) immediately, without
+// waiting for the next written line — otherwise a toggle looks like it did
+// nothing. Leaves `savePath` intact so re-enabling still shows the live file.
+export function setSaving(isSaving, dir) {
+  saving = isSaving;
+  if (dir) saveDir = dir;
+  renderSave();
+}
+
 export function initStatusbar() {
   listen("capture", (event) => {
     const { sources, saving: s, save_dir } = event.payload;
