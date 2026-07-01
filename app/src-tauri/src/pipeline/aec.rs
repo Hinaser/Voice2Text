@@ -159,9 +159,12 @@ impl Aec {
             self.mic_count += 1;
         }
 
-        // (Re)estimate bulk alignment when due or when we have none yet.
+        // (Re)estimate bulk alignment periodically. Rate-limited even before the
+        // first lock: the search is O(range × window) (tens of millions of MACs),
+        // so triggering it every chunk while unaligned — as "no alignment yet"
+        // used to — saturates the processing thread and lags the captions.
         self.since_estimate += mic.len() as u64;
-        if self.align.is_none() || self.since_estimate >= REESTIMATE_EVERY {
+        if self.since_estimate >= REESTIMATE_EVERY {
             self.estimate_delay();
             self.since_estimate = 0;
         }
@@ -249,6 +252,18 @@ impl Aec {
         if self.mic_count < CORR_WIN as u64 || self.ref_count < CORR_WIN as u64 {
             return;
         }
+        // Cheap early-out: with a silent/near-silent reference (no meeting audio
+        // playing) there is no echo to align to, so skip the expensive search
+        // entirely rather than scanning the whole delay range every 0.5 s.
+        let mut ref_recent = 0.0f32;
+        for j in 0..CORR_WIN as u64 {
+            let r = self.ref_ring[(((self.ref_count - CORR_WIN as u64 + j) & RING_MASK)) as usize];
+            ref_recent += r * r;
+        }
+        if ref_recent < REF_ACTIVE * CORR_WIN as f32 {
+            return;
+        }
+
         let win = CORR_WIN as u64;
         let mic_lo = self.mic_count - win; // window [mic_lo, mic_count)
 

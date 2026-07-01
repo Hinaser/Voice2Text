@@ -1,6 +1,6 @@
 [package]
 name = "llama-sidecar"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 description = "Voice2Text local-LLM sidecar — summarizes a meeting transcript with Qwen2.5-3B on the GPU, kept out of the main app so the launcher stays small."
 
