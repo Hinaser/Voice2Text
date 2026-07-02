@@ -1,6 +1,6 @@
 [package]
 name = "whisper-sidecar"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 description = "Voice2Text Whisper-CUDA sidecar — re-transcribes utterances for the clean saved transcript, kept out of the main (CPU-only) app so the launcher stays small."
 

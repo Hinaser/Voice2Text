@@ -17,8 +17,10 @@ use super::corrector::Corrector;
 use super::events::Ui;
 use super::transcript::TranscriptWriter;
 
-/// Bound on queued utterances. Whisper runs far faster than real time, so this
-/// is only a safety valve against unbounded memory growth if it ever stalls.
+/// Bound on queued utterances awaiting Whisper. Whisper alone runs far faster
+/// than real time (the slower LLM polish runs on its own thread downstream),
+/// so this is only a safety valve against unbounded memory growth if the
+/// sidecar ever stalls.
 const QUEUE_CAP: usize = 64;
 
 const SIDECAR_EXE: &str = "whisper-sidecar.exe";
@@ -96,8 +98,18 @@ fn spawn_process(model: &Path, language: &str) -> std::io::Result<SidecarIo> {
     Ok((child, stdin, BufReader::new(stdout)))
 }
 
-/// Drive the sidecar synchronously: one job in, one transcript line out, in
-/// order. Owns the child so it lives for the app's lifetime.
+/// A whisper-cleaned line handed to the finishing thread.
+struct FinishJob {
+    id: u64,
+    time: String,
+    label: String,
+    text: String,
+}
+
+/// Drive the sidecar synchronously: one job in, one clean line out, in order.
+/// Owns the child so it lives for the app's lifetime. The (slower) LLM polish
+/// and the transcript write happen on a separate finishing thread, so one slow
+/// correction can't delay the next utterance's Whisper caption upgrade.
 fn manager(
     mut child: Child,
     mut stdin: ChildStdin,
@@ -106,19 +118,14 @@ fn manager(
     ui: Ui,
     rx: Receiver<WhisperJob>,
 ) {
-    let mut writer: Option<TranscriptWriter> = None;
-    // Optional LLM polish, loaded once. Needs a model; degrades to plain Whisper
-    // text if disabled or unavailable.
-    let mut corrector = {
-        let cfg = config.lock().unwrap().clone();
-        if cfg.llm_correction {
-            Corrector::spawn(&cfg.models_dir, &cfg.summary_model, &ui)
-        } else {
-            None
-        }
+    // Unbounded on purpose: entries are short strings, and dropping one would
+    // silently lose a transcript line.
+    let (finish_tx, finish_rx) = mpsc::channel::<FinishJob>();
+    let finisher = {
+        let (config, ui) = (config.clone(), ui.clone());
+        thread::spawn(move || finish(config, ui, finish_rx))
     };
     while let Ok(job) = rx.recv() {
-        let cfg = config.lock().unwrap().clone();
         if stdin.write_all(&encode_frame(&job.audio)).and_then(|_| stdin.flush()).is_err() {
             ui.status("error", "Whisper sidecar stopped; clean transcript disabled");
             break;
@@ -137,27 +144,50 @@ fn manager(
             continue;
         }
         // Upgrade the live caption from streaming text to Whisper's accurate
-        // transcription of the same utterance.
+        // transcription of the same utterance, then hand off for polish + save.
         super::seglog::log(&format!("           id={} whisper={:?}", job.id, text));
         ui.replace_line(job.id, text.to_string());
+        let job = FinishJob { id: job.id, time: job.time, label: job.label, text: text.to_string() };
+        if finish_tx.send(job).is_err() {
+            break;
+        }
+    }
+    drop(finish_tx); // let the finisher drain and exit
+    let _ = finisher.join();
+    let _ = child.kill();
+    let _ = child.wait();
+}
 
-        // Then optionally LLM-polish that clean text with recent context, and
-        // swap it in again if the correction was accepted. The polished text is
-        // what we save.
+/// Finishing stage: optionally polish each line with the local LLM (loaded
+/// once; degrades to plain Whisper text if unavailable or dead) and append the
+/// result to the transcript file.
+fn finish(config: Arc<Mutex<Config>>, ui: Ui, rx: Receiver<FinishJob>) {
+    let mut corrector = {
+        let cfg = config.lock().unwrap().clone();
+        if cfg.llm_correction {
+            Corrector::spawn(&cfg.models_dir, &cfg.summary_model, &ui)
+        } else {
+            None
+        }
+    };
+    let mut writer: Option<TranscriptWriter> = None;
+    while let Ok(job) = rx.recv() {
+        let cfg = config.lock().unwrap().clone();
         let final_text = match corrector.as_mut() {
             Some(c) => {
-                let polished = c.correct(text);
-                if polished != text {
+                let polished = c.correct(&job.text);
+                if polished != job.text {
                     super::seglog::log(&format!("           id={} polished={:?}", job.id, polished));
                     ui.replace_line(job.id, polished.clone());
                 }
                 polished
             }
-            None => text.to_string(),
+            None => job.text.clone(),
         };
-
         if cfg.save_transcript {
             let w = writer.get_or_insert_with(|| TranscriptWriter::new(cfg.resolved_save_dir()));
+            // Follow a live save-folder change on the next line.
+            w.retarget(cfg.resolved_save_dir());
             match w.write_line(&job.time, &job.label, &final_text) {
                 Ok(Some(path)) => ui.saving(path.to_string_lossy().into_owned()),
                 Ok(None) => {}
@@ -165,8 +195,6 @@ fn manager(
             }
         }
     }
-    let _ = child.kill();
-    let _ = child.wait();
 }
 
 /// Wire frame: u32 LE sample-count, then that many f32 LE samples.

@@ -30,8 +30,30 @@ const RING_MASK: u64 = (RING as u64) - 1;
 const MAX_DELAY: i64 = 16_000;
 /// Correlation window used for delay estimation (≈256 ms).
 const CORR_WIN: usize = 4096;
-/// Re-estimate the bulk delay this often (in mic samples processed); ≈0.5 s.
+/// Re-estimate the bulk delay this often while still hunting for a lock
+/// (in mic samples processed); ≈0.5 s.
 const REESTIMATE_EVERY: u64 = 8_000;
+/// Once converged, only re-check alignment this often (≈5 s) — drift between
+/// the two device clocks is ppm-scale, and every search is a burst of work on
+/// the audio thread, so a healthy filter shouldn't pay it twice a second.
+const RECHECK_EVERY: u64 = 80_000;
+/// Coarse-search decimation: the first correlation pass runs on 4×-averaged
+/// signals at 4-sample lag steps (≈16× fewer ops), then a full-rate pass
+/// refines around the coarse peak.
+const DECIM: usize = 4;
+/// Full-rate refinement half-span around the coarse peak (must cover the
+/// coarse pass's ±DECIM quantization error).
+const REFINE_SPAN: i64 = 2 * DECIM as i64;
+/// The alignment is set GUARD samples past the correlation peak so the echo
+/// path sits GUARD taps into the filter — leaving headroom for the clock
+/// drift / peak jitter below to shift it either way without falling off the
+/// front of the tap window.
+const ALIGN_GUARD: i64 = 128;
+/// A re-estimate whose peak moved by no more than this keeps the existing
+/// weights: NLMS tracks small shifts on its own (they stay within the guard
+/// band), and zeroing the filter for ±1-sample peak jitter would leak echo
+/// through for the whole re-convergence.
+const REALIGN_TOLERANCE: i64 = 64;
 /// NLMS step size (0..2). Lower = slower but stabler convergence.
 const MU: f32 = 0.5;
 /// NLMS regularization, guards the divide when the reference is near-silent.
@@ -68,6 +90,15 @@ const MIN_ADAPT: u64 = 4 * FILTER_LEN as u64;
 /// within near-end speech (and tone zero-crossings) that would otherwise
 /// re-enable adaptation and let the filter chew into the near-end. ≈200 ms.
 const HANGOVER: u32 = 3_200;
+/// A continuous double-talk freeze longer than this (≈3 s) is assumed to be an
+/// *echo-path change* (delay drift past the guard band, level change), not real
+/// talk-over: the high residual is the stale filter's own bad prediction, and
+/// without an escape the freeze re-arms itself forever and the canceller is
+/// permanently dead. On escape we drop back to bootstrap adaptation, keeping
+/// the weights as a warm start. Trade-off: a user talking over the attendees
+/// for >3 s continuously briefly re-enables adaptation (the text dedup layer
+/// still backstops any resulting leak).
+const DT_ESCAPE: u64 = 48_000;
 /// Minimum correlation quality to accept a new delay estimate over the old one.
 const MIN_CORR: f32 = 0.3;
 
@@ -97,6 +128,8 @@ pub struct Aec {
     converged: bool,
     /// Remaining hold-down samples after a double-talk detection (hangover).
     dt_hold: u32,
+    /// Consecutive samples spent frozen; drives the path-change escape.
+    dt_run: u64,
     /// Reference-active samples adapted since the last (re)alignment; the
     /// convergence latch waits for this so it can't fire during the power ramp.
     adapt_count: u64,
@@ -118,6 +151,7 @@ impl Aec {
             err_fast: 0.0,
             converged: false,
             dt_hold: 0,
+            dt_run: 0,
             adapt_count: 0,
         }
     }
@@ -139,6 +173,7 @@ impl Aec {
         self.err_fast = 0.0;
         self.converged = false;
         self.dt_hold = 0;
+        self.dt_run = 0;
         self.adapt_count = 0;
     }
 
@@ -160,11 +195,12 @@ impl Aec {
         }
 
         // (Re)estimate bulk alignment periodically. Rate-limited even before the
-        // first lock: the search is O(range × window) (tens of millions of MACs),
-        // so triggering it every chunk while unaligned — as "no alignment yet"
-        // used to — saturates the processing thread and lags the captions.
+        // first lock (an every-chunk search would saturate the processing
+        // thread), and backed off much further once the filter is converged —
+        // at that point the search is drift insurance, not a necessity.
         self.since_estimate += mic.len() as u64;
-        if self.since_estimate >= REESTIMATE_EVERY {
+        let due = if self.converged { RECHECK_EVERY } else { REESTIMATE_EVERY };
+        if self.since_estimate >= due {
             self.estimate_delay();
             self.since_estimate = 0;
         }
@@ -221,6 +257,19 @@ impl Aec {
         }
         let double_talk = self.dt_hold > 0;
         self.dt_hold = self.dt_hold.saturating_sub(1);
+        // Path-change escape: a freeze that outlives any plausible talk-over is
+        // the stale filter fighting its own prediction — resume adaptation.
+        if double_talk {
+            self.dt_run += 1;
+            if self.dt_run >= DT_ESCAPE {
+                self.converged = false;
+                self.adapt_count = 0;
+                self.dt_hold = 0;
+                self.dt_run = 0;
+            }
+        } else {
+            self.dt_run = 0;
+        }
 
         if reference_active && !double_talk {
             self.adapt_count += 1;
@@ -264,70 +313,136 @@ impl Aec {
             return;
         }
 
-        let win = CORR_WIN as u64;
-        let mic_lo = self.mic_count - win; // window [mic_lo, mic_count)
+        let mic_lo = self.mic_count - CORR_WIN as u64; // window [mic_lo, mic_count)
 
         // Search align so that ref index (n + align) stays within the ring for
         // the whole window: centered on the count difference, looking back up to
         // MAX_DELAY (reference leading the mic).
         let base = self.ref_count as i64 - self.mic_count as i64;
-        let hi = base;
         let lo = base - MAX_DELAY;
+        let hi = base;
 
-        // Precompute mic window energy.
-        let mut mic_energy = 0.0f32;
-        for j in 0..CORR_WIN {
-            let m = self.mic_ring[(((mic_lo + j as u64) & RING_MASK)) as usize];
-            mic_energy += m * m;
+        // Coarse pass on 4×-block-averaged signals at 4-sample lag steps
+        // (≈16× cheaper than the old exhaustive full-rate scan), then a
+        // full-rate refinement around the coarse peak. MIN_CORR is applied to
+        // the refined (full-rate) score only — the coarse pass just proposes.
+        let coarse = match self.coarse_peak(mic_lo, lo, hi) {
+            Some(c) => c,
+            None => return,
+        };
+        let (refine_lo, refine_hi) = ((coarse - REFINE_SPAN).max(lo), (coarse + REFINE_SPAN).min(hi));
+        let best = self.correlate_range(mic_lo, refine_lo, refine_hi, 1);
+        let peak = match best {
+            Some((a, score)) if score > MIN_CORR => a,
+            _ => return,
+        };
+
+        // Place the echo path GUARD taps into the filter (clamped so `head`
+        // never runs past the reference we actually have).
+        let candidate = (peak + ALIGN_GUARD).min(base);
+        match self.align {
+            // Small moves stay within the guard band; NLMS re-centers the
+            // impulse response itself, so keep the learned weights.
+            Some(old) if (candidate - old).abs() <= REALIGN_TOLERANCE => {}
+            Some(_) => {
+                // A genuine re-alignment: the weights no longer line up.
+                for w in &mut self.weights {
+                    *w = 0.0;
+                }
+                self.converged = false;
+                self.adapt_count = 0;
+                self.align = Some(candidate);
+            }
+            None => self.align = Some(candidate),
         }
+    }
+
+    /// Coarse correlation pass: block-average both signals by DECIM and scan
+    /// the whole lag range at DECIM-sample steps. Returns the best full-rate
+    /// lag (quantized to DECIM), or None if nothing correlates at all.
+    fn coarse_peak(&self, mic_lo: u64, lo: i64, hi: i64) -> Option<i64> {
+        let cw = CORR_WIN / DECIM;
+        // Decimate the mic window once.
+        let mut mic_d = vec![0.0f32; cw];
+        for (i, m) in mic_d.iter_mut().enumerate() {
+            let mut acc = 0.0f32;
+            for j in 0..DECIM {
+                acc += self.mic_ring[(((mic_lo + (i * DECIM + j) as u64) & RING_MASK)) as usize];
+            }
+            *m = acc;
+        }
+        let mic_energy: f32 = mic_d.iter().map(|m| m * m).sum();
         if mic_energy <= 0.0 {
-            return;
+            return None;
         }
 
         let oldest = self.ref_oldest() as i64;
-        let mut best_score = MIN_CORR;
-        let mut best_align: Option<i64> = None;
+        let mut best: Option<(i64, f32)> = None;
         let mut a = lo;
         while a <= hi {
             // Require the whole correlated reference span to be in the ring.
             let r_lo = mic_lo as i64 + a;
             let r_hi = (self.mic_count - 1) as i64 + a;
-            if r_lo < oldest || r_hi >= self.ref_count as i64 {
-                a += 1;
-                continue;
-            }
-            let mut dot = 0.0f32;
-            let mut ref_energy = 0.0f32;
-            for j in 0..win {
-                let m = self.mic_ring[(((mic_lo + j) & RING_MASK)) as usize];
-                let r = self.ref_ring[((((mic_lo + j) as i64 + a) as u64 & RING_MASK)) as usize];
-                dot += m * r;
-                ref_energy += r * r;
-            }
-            if ref_energy > 0.0 {
-                let score = dot / (mic_energy.sqrt() * ref_energy.sqrt());
-                if score > best_score {
-                    best_score = score;
-                    best_align = Some(a);
-                }
-            }
-            a += 1;
-        }
-
-        if let Some(a) = best_align {
-            // On a re-estimate that moves the alignment, the existing weights no
-            // longer line up with the reference, so reset them to re-converge.
-            if self.align != Some(a) {
-                if self.align.is_some() {
-                    for w in &mut self.weights {
-                        *w = 0.0;
+            if r_lo >= oldest && r_hi < self.ref_count as i64 {
+                let mut dot = 0.0f32;
+                let mut ref_energy = 0.0f32;
+                for (i, m) in mic_d.iter().enumerate() {
+                    let mut r = 0.0f32;
+                    let start = mic_lo as i64 + (i * DECIM) as i64 + a;
+                    for j in 0..DECIM {
+                        r += self.ref_ring[(((start + j as i64) as u64) & RING_MASK) as usize];
                     }
-                    self.converged = false;
-                    self.adapt_count = 0;
+                    dot += m * r;
+                    ref_energy += r * r;
                 }
-                self.align = Some(a);
+                if ref_energy > 0.0 {
+                    let score = dot / (mic_energy.sqrt() * ref_energy.sqrt());
+                    if best.map_or(true, |(_, s)| score > s) {
+                        best = Some((a, score));
+                    }
+                }
             }
+            a += DECIM as i64;
         }
+        best.map(|(a, _)| a)
+    }
+
+    /// Full-rate normalized correlation over `[lo, hi]` at `step`-sample lags.
+    /// Returns the best (lag, score) among in-ring lags.
+    fn correlate_range(&self, mic_lo: u64, lo: i64, hi: i64, step: i64) -> Option<(i64, f32)> {
+        let mut mic_energy = 0.0f32;
+        for j in 0..CORR_WIN as u64 {
+            let m = self.mic_ring[(((mic_lo + j) & RING_MASK)) as usize];
+            mic_energy += m * m;
+        }
+        if mic_energy <= 0.0 {
+            return None;
+        }
+        let oldest = self.ref_oldest() as i64;
+        let mut best: Option<(i64, f32)> = None;
+        let mut a = lo;
+        while a <= hi {
+            let r_lo = mic_lo as i64 + a;
+            let r_hi = (self.mic_count - 1) as i64 + a;
+            if r_lo >= oldest && r_hi < self.ref_count as i64 {
+                let mut dot = 0.0f32;
+                let mut ref_energy = 0.0f32;
+                for j in 0..CORR_WIN as u64 {
+                    let m = self.mic_ring[(((mic_lo + j) & RING_MASK)) as usize];
+                    let r = self.ref_ring[((((mic_lo + j) as i64 + a) as u64 & RING_MASK)) as usize];
+                    dot += m * r;
+                    ref_energy += r * r;
+                }
+                if ref_energy > 0.0 {
+                    let score = dot / (mic_energy.sqrt() * ref_energy.sqrt());
+                    if best.map_or(true, |(_, s)| score > s) {
+                        best = Some((a, score));
+                    }
+                }
+            }
+            a += step;
+        }
+        best
     }
 }
 
@@ -397,6 +512,54 @@ mod tests {
 
         let reduction_db = 10.0 * (power(&echo_tail) / power(&residual_tail)).log10();
         assert!(reduction_db > 12.0, "echo reduction only {reduction_db:.1} dB");
+    }
+
+    /// A small delay drift (clock skew / device latency change) must not kill
+    /// the canceller: the shifted echo first looks like double-talk (the stale
+    /// prediction inflates the residual), but the path-change escape lifts the
+    /// freeze after DT_ESCAPE and the filter re-adapts within its guard band —
+    /// without this, the freeze re-arms itself forever and echo leaks
+    /// permanently. End state: converged again and cancelling.
+    #[test]
+    fn small_delay_drift_recovers() {
+        const FRAME: usize = 160;
+        const CONVERGE: usize = 600; // ~6 s at DELAY, spans a converged re-check
+        const DRIFTED: usize = 1000; // ~10 s at DELAY + 10: escape (~3 s) + re-adapt
+        const GAIN: f32 = 0.6;
+
+        let mut rng = Lcg(0x5eed_cafe);
+        let mut aec = Aec::new();
+        let total = FRAME * (CONVERGE + DRIFTED) + 3000;
+        let mut reference = vec![0.0f32; total];
+        for r in reference.iter_mut() {
+            *r = rng.next_f32();
+        }
+
+        let mut residual_tail = Vec::new();
+        let mut echo_tail = Vec::new();
+        for f in 0..(CONVERGE + DRIFTED) {
+            let base = f * FRAME;
+            let delay = if f < CONVERGE { 2000 } else { 2010 }; // +10-sample drift
+            let mut mic_frame = vec![0.0f32; FRAME];
+            for (i, m) in mic_frame.iter_mut().enumerate() {
+                let t = base + i;
+                if t >= delay {
+                    *m = GAIN * reference[t - delay];
+                }
+            }
+            aec.push_reference(&reference[base..base + FRAME]);
+            let out = aec.process_capture(&mic_frame);
+            if f >= CONVERGE + DRIFTED - 60 {
+                residual_tail.extend_from_slice(&out);
+                echo_tail.extend_from_slice(&mic_frame);
+            }
+        }
+
+        // The filter must have re-locked (escape fired, re-adapted, re-latched)…
+        assert!(aec.converged, "filter never recovered from the path change");
+        // …and be cancelling well by the end of the drifted segment.
+        let reduction_db = 10.0 * (power(&echo_tail) / power(&residual_tail)).log10();
+        assert!(reduction_db > 12.0, "echo reduction after drift only {reduction_db:.1} dB");
     }
 
     /// Near-end speech (added on top of the echo) must survive cancellation: the

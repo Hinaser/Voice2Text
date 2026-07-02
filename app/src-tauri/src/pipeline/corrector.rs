@@ -14,7 +14,10 @@
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::thread;
+use std::time::Duration;
 
 use crate::paths;
 
@@ -32,13 +35,28 @@ const CONTEXT_LINES: usize = 4;
 const MAX_EDIT_FRAC: f32 = 0.4;
 /// Also reject corrections that balloon the length (added/invented content).
 const MAX_LEN_GROWTH: f32 = 1.6;
+/// How long to wait for the model to load and print READY (cold disk reads of
+/// a multi-GB GGUF can be slow).
+const READY_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long to wait for one correction. Generation is bounded to roughly the
+/// input length, so anything beyond this means the sidecar is wedged (GPU
+/// fault, driver reset) — kill it rather than block the transcript pipeline
+/// forever on a blocking read.
+const CORRECT_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub struct Corrector {
     child: Child,
     stdin: ChildStdin,
-    reader: BufReader<ChildStdout>,
+    /// Replies arrive via a dedicated reader thread, so waits can time out —
+    /// a blocking read here would let a hung sidecar freeze the caller (and
+    /// with it every later transcript write) with no visible error.
+    replies: Receiver<String>,
     /// Rolling window of recent accepted lines, oldest first.
     context: VecDeque<String>,
+    ui: Ui,
+    /// Latched on timeout/IO failure: the child is dead and every later
+    /// `correct` is a cheap pass-through.
+    dead: bool,
 }
 
 impl Corrector {
@@ -70,23 +88,42 @@ impl Corrector {
         };
         let stdin = child.stdin.take()?;
         let stdout = child.stdout.take()?;
-        let mut reader = BufReader::new(stdout);
 
-        let mut first = String::new();
-        let ready = reader.read_line(&mut first).is_ok() && first.trim() == "READY";
+        // Reader thread: forwards each stdout line; exits on EOF/error.
+        let (tx, replies) = mpsc::channel::<String>();
+        thread::spawn(move || {
+            let mut reader = BufReader::new(stdout);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                match reader.read_line(&mut line) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {
+                        if tx.send(line.trim_end_matches(['\n', '\r']).to_string()).is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+
+        let ready = matches!(replies.recv_timeout(READY_TIMEOUT), Ok(l) if l.trim() == "READY");
         if !ready {
             ui.status("error", "LLM correction unavailable");
             let _ = child.kill();
             let _ = child.wait();
             return None;
         }
-        Some(Self { child, stdin, reader, context: VecDeque::new() })
+        Some(Self { child, stdin, replies, context: VecDeque::new(), ui: ui.clone(), dead: false })
     }
 
     /// Polish `text` with the recent context. Returns the accepted line (the
     /// correction if it passed the guard, otherwise `text` unchanged) and pushes
     /// it onto the context window for subsequent calls.
     pub fn correct(&mut self, text: &str) -> String {
+        if self.dead {
+            return text.to_string();
+        }
         let accepted = match self.request(text) {
             Some(corrected) if accept_correction(text, &corrected) => corrected,
             _ => text.to_string(),
@@ -98,7 +135,9 @@ impl Corrector {
         accepted
     }
 
-    /// Send one request and read the single-line reply. `None` on I/O error.
+    /// Send one request and wait (bounded) for the single-line reply. `None` on
+    /// I/O error or timeout — in both cases the sidecar is killed and the
+    /// corrector latched dead, since the request/reply framing is broken.
     fn request(&mut self, text: &str) -> Option<String> {
         let target = sanitize(text);
         if target.trim().is_empty() {
@@ -110,13 +149,30 @@ impl Corrector {
         req.push_str(&target);
         req.push('\n');
 
-        self.stdin.write_all(req.as_bytes()).ok()?;
-        self.stdin.flush().ok()?;
+        if self.stdin.write_all(req.as_bytes()).and_then(|_| self.stdin.flush()).is_err() {
+            self.die("LLM correction stopped; continuing without it");
+            return None;
+        }
+        match self.replies.recv_timeout(CORRECT_TIMEOUT) {
+            Ok(line) => Some(line.trim().to_string()),
+            Err(RecvTimeoutError::Timeout) => {
+                self.die("LLM correction timed out; continuing without it");
+                None
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                self.die("LLM correction stopped; continuing without it");
+                None
+            }
+        }
+    }
 
-        let mut line = String::new();
-        match self.reader.read_line(&mut line) {
-            Ok(0) | Err(_) => None,
-            Ok(_) => Some(line.trim().to_string()),
+    /// Kill the sidecar and latch this corrector dead, surfacing why.
+    fn die(&mut self, msg: &str) {
+        if !self.dead {
+            self.dead = true;
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+            self.ui.status("error", msg.to_string());
         }
     }
 }

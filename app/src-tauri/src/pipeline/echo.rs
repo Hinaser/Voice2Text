@@ -25,6 +25,12 @@ const THRESHOLD: f32 = 0.55;
 /// Words this long or longer may match across an edit distance of 1 (tolerates
 /// ASR drift like plurals/tense); shorter words must match exactly.
 const FUZZY_MIN_LEN: usize = 4;
+/// Mic lines shorter than this must be covered by a SINGLE system line. The
+/// union-of-all-recent-words matching (needed for echoes that straddle two
+/// system utterances) is statistically unsafe for short lines: common words
+/// scattered across different lines ("i" here, "agree" there) would suppress
+/// the user's brief genuine replies.
+const UNION_MIN_WORDS: usize = 5;
 
 pub struct EchoFilter {
     /// Finalized system lines within the window, oldest first.
@@ -65,26 +71,30 @@ impl EchoFilter {
         }
         self.prune(now);
 
-        // Union of all in-window system words as a consumable multiset.
-        let mut counts: HashMap<&str, i32> = HashMap::new();
-        for (_, sys) in &self.finals {
-            for w in sys {
-                *counts.entry(w.as_str()).or_insert(0) += 1;
-            }
-        }
+        // All in-window system lines: finals plus the live partial.
+        let mut lines: Vec<&Vec<String>> = self.finals.iter().map(|(_, sys)| sys).collect();
         if let Some((t, sys)) = &self.partial {
             if now.duration_since(*t) <= WINDOW {
-                for w in sys {
-                    *counts.entry(w.as_str()).or_insert(0) += 1;
-                }
+                lines.push(sys);
             }
         }
-        if counts.is_empty() {
+        if lines.is_empty() {
             return false;
         }
 
-        let hit = covered(&mic, &mut counts);
-        hit as f32 / mic.len() as f32 >= THRESHOLD
+        // Short mic lines: require a single system line to explain them (see
+        // UNION_MIN_WORDS). Longer echoes may straddle utterance boundaries,
+        // so those are matched against the union of all recent words.
+        if mic.len() < UNION_MIN_WORDS {
+            return lines.iter().any(|sys| coverage_frac(&mic, sys) >= THRESHOLD);
+        }
+        let mut counts: HashMap<&str, i32> = HashMap::new();
+        for sys in &lines {
+            for w in sys.iter() {
+                *counts.entry(w.as_str()).or_insert(0) += 1;
+            }
+        }
+        covered(&mic, &mut counts) as f32 / mic.len() as f32 >= THRESHOLD
     }
 
     fn prune(&mut self, now: Instant) {
@@ -109,6 +119,15 @@ fn tokenize(s: &str) -> Vec<String> {
         .filter(|w| !w.is_empty())
         .map(|w| w.to_string())
         .collect()
+}
+
+/// Fraction of `mic` explained by one system line.
+fn coverage_frac(mic: &[String], sys: &[String]) -> f32 {
+    let mut counts: HashMap<&str, i32> = HashMap::new();
+    for w in sys {
+        *counts.entry(w.as_str()).or_insert(0) += 1;
+    }
+    covered(mic, &mut counts) as f32 / mic.len() as f32
 }
 
 /// Number of `mic` words explained by the system multiset `counts`, consuming a
@@ -231,6 +250,19 @@ mod tests {
         // echo already finalizes. It must still be caught.
         f.record_partial(now, "we should ship the release on friday");
         assert!(f.is_echo(now, "we should ship the release on friday"));
+    }
+
+    #[test]
+    fn short_genuine_reply_is_not_suppressed_by_scattered_words() {
+        let mut f = EchoFilter::new();
+        let now = Instant::now();
+        f.record_final(now, "i think we should ship");
+        f.record_final(now, "do you agree with the plan");
+        // "i" appears in the first line and "agree" in the second — pooled they
+        // cover 2/3 of this genuine reply, but no single line explains it.
+        assert!(!f.is_echo(now, "yeah i agree"));
+        // A short line that IS a real echo of one system line is still caught.
+        assert!(f.is_echo(now, "do you agree"));
     }
 
     #[test]
