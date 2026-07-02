@@ -291,6 +291,8 @@ pub fn run(
                         } else if cfg.save_transcript {
                             let writer = fallback_writer
                                 .get_or_insert_with(|| TranscriptWriter::new(cfg.resolved_save_dir()));
+                            // Follow a live save-folder change on the next line.
+                            writer.retarget(cfg.resolved_save_dir());
                             match writer.write_line(&time, &label, &polished) {
                                 Ok(Some(path)) => ui.saving(path.to_string_lossy().into_owned()),
                                 Ok(None) => {}

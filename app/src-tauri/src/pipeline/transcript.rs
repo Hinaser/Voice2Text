@@ -18,6 +18,18 @@ impl TranscriptWriter {
         Self { dir, writer: None }
     }
 
+    /// Point future lines at the (possibly changed) folder. If it differs from
+    /// where the current file lives, that file is closed and the next line
+    /// opens a fresh one in the new folder — so changing the save folder in
+    /// Settings takes effect on the next line instead of being silently
+    /// ignored for the rest of the session.
+    pub fn retarget(&mut self, dir: PathBuf) {
+        if dir != self.dir {
+            self.dir = dir;
+            self.writer = None;
+        }
+    }
+
     /// Append one finalized line, opening a fresh timestamped file on first use.
     /// Returns the file path the first time it opens (so the caller can surface
     /// a "Saving to …" status), and `None` thereafter.
